@@ -1,0 +1,28 @@
+# --- Secrets ---
+.env
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- Fetched dataset (downloaded by scripts/setup, not vendored) ---
+datasets/chinook/01-chinook-schema.sql
+datasets/chinook/01-chinook-schema-utf8.sql
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Docker ---
+infrastructure/*.local.yml

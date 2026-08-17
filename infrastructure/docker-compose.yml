@@ -1,0 +1,63 @@
+name: query-lens
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: query-lens-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs once on first container creation, in filename order:
+      # 00-create-databases.sql creates the `chinook` database, then
+      # 01-chinook-schema.sql (fetched by scripts/setup) loads its
+      # schema + sample data into it. See datasets/chinook/README.md.
+      - ../datasets/chinook:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: query-lens-backend
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/app_db
+      ANALYTICS_DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/chinook
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: query-lens-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
