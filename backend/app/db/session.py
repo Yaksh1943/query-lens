@@ -1,10 +1,12 @@
 """
-SQLAlchemy engine and session for the application's own database
-(query history, users, saved connections, etc.).
+SQLAlchemy engines for the two separate databases this app talks to:
 
-The separate *analytics* database (the one being queried in natural
-language) is connected to independently — see app/db/analytics.py,
-added in Phase 1 once query execution is implemented.
+- `engine` / `get_db()`   -> the application's own database (query
+  history, users, saved connections, etc.)
+- `analytics_engine`       -> the database being queried in natural
+  language (Chinook locally). Deliberately a separate engine, never
+  mixed with the app database — see app/db/schema.py and
+  app/db/analytics.py, which use this one.
 """
 from collections.abc import Generator
 
@@ -18,9 +20,11 @@ settings = get_settings()
 engine = create_engine(settings.app_database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
+analytics_engine = create_engine(settings.analytics_database_url, pool_pre_ping=True)
+
 
 def get_db() -> Generator[Session, None, None]:
-    """FastAPI dependency that yields a DB session and always closes it."""
+    """FastAPI dependency that yields an app-database session and always closes it."""
     db = SessionLocal()
     try:
         yield db
