@@ -55,3 +55,34 @@ Rules:
 - If the result rows are empty, say clearly that no matching data was found.
 
 Answer:"""
+
+def build_ambiguity_prompt(question: str, schema_text: str) -> str:
+    """
+    Builds the prompt that asks the LLM to judge whether a question is
+    answerable unambiguously against the schema, before any SQL is
+    generated.
+    """
+    return f"""You are a PostgreSQL expert reviewing a question before writing SQL for it. \
+Given a database schema and a question, decide whether the question is clear enough to \
+answer with a single, unambiguous SQL query.
+
+Database schema:
+{schema_text}
+
+A question is ambiguous if:
+- It's missing information needed to answer it precisely (e.g. "top customers" without \
+saying by what measure — spending, order count, etc.)
+- A word or phrase in the question could reasonably map to more than one table or column \
+in the schema, and the correct choice isn't clear from context.
+- It implies a time range or filter that isn't specified (e.g. "recent" orders).
+
+A question is NOT ambiguous just because it's simple, broad, or could return many rows \
+(e.g. "list all customers" is fine — it doesn't need clarification).
+
+Question: {question}
+
+Respond with ONLY a raw JSON object, no markdown fences, no explanation outside the JSON, \
+in exactly this shape:
+{{"is_ambiguous": true or false, "clarification_question": "a single, specific question \
+to ask the user, or null if not ambiguous", "reasoning": "one short sentence explaining \
+your judgment"}}"""

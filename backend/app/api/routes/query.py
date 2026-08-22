@@ -1,10 +1,11 @@
 """
 POST /api/query — the full Text-to-SQL pipeline in one endpoint.
 
-Flow: generate SQL -> validate -> execute -> generate answer -> save
-history -> return response. Validation/execution failures are not
-server errors — they're the system correctly catching bad input, so
-they return 200 with success=False, not a 500.
+Flow: check ambiguity -> generate SQL -> validate -> execute ->
+generate answer -> save history -> return response. Ambiguity and
+validation/execution failures are not server errors — they're the
+system correctly catching bad input, so they return 200 with
+success=False, not a 500.
 """
 import json
 
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.ambiguity import detect_ambiguity
 from app.core.config import get_settings
 from app.core.sql_generation import generate_answer, generate_sql
 from app.core.sql_validation import validate_sql
@@ -31,10 +33,11 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     trace_id: int
-    sql: str
+    sql: str | None
     success: bool
     result: dict
     answer: str | None
+    clarification_question: str | None = None
     errors: list[str] = []
 
 
@@ -46,10 +49,38 @@ def _sample_rows(rows: list[dict], limit: int = 3) -> list[dict]:
 def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResponse:
     provider = GeminiProvider(api_key=settings.gemini_api_key)
 
-    # 1. Generate SQL
+    # 1. Check for ambiguity before generating any SQL
+    ambiguity = detect_ambiguity(request.question, provider)
+
+    if ambiguity.is_ambiguous:
+        history = QueryHistory(
+            question=request.question,
+            generated_sql="",
+            result_summary=None,
+            answer=None,
+            clarification_question=ambiguity.clarification_question,
+            success=False,
+            error=None,
+            execution_ms=0.0,
+        )
+        db.add(history)
+        db.commit()
+        db.refresh(history)
+
+        return QueryResponse(
+            trace_id=history.id,
+            sql=None,
+            success=False,
+            result={},
+            answer=None,
+            clarification_question=ambiguity.clarification_question,
+            errors=[],
+        )
+
+    # 2. Generate SQL
     generated = generate_sql(request.question, provider)
 
-    # 2. Validate
+    # 3. Validate
     schema = get_schema_snapshot()
     validation = validate_sql(generated.sql, schema)
 
@@ -76,7 +107,7 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
             errors=validation.errors,
         )
 
-    # 3. Execute
+    # 4. Execute
     query_result = execute_query(validation.sql)
 
     if not query_result.success:
@@ -102,10 +133,10 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
             errors=[query_result.error or "Query execution failed."],
         )
 
-    # 4. Generate natural-language answer
+    # 5. Generate natural-language answer
     answer = generate_answer(request.question, validation.sql, query_result.rows, provider)
 
-    # 5. Save history
+    # 6. Save history
     result_summary = json.dumps(
         {"row_count": query_result.row_count, "sample_rows": _sample_rows(query_result.rows)},
         default=str,  # handles Decimal, datetime, etc.
@@ -124,7 +155,7 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
     db.commit()
     db.refresh(history)
 
-    # 6. Return
+    # 7. Return
     return QueryResponse(
         trace_id=history.id,
         sql=validation.sql,

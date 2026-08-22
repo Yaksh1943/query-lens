@@ -31,6 +31,7 @@ class QueryHistory(Base):
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    clarification_question: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
