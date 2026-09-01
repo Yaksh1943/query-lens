@@ -19,6 +19,12 @@ class GeneratedSQL:
     raw_response: LLMResponse
 
 
+@dataclass
+class GeneratedAnswer:
+    text: str
+    raw_response: LLMResponse
+
+
 _CODE_FENCE_RE = re.compile(r"^```(?:sql)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 
 
@@ -46,8 +52,8 @@ def generate_answer(
     sql: str,
     rows: list[dict],
     provider: LLMProvider,
-) -> str:
+) -> GeneratedAnswer:
     """Turns a question + the SQL that ran + result rows into a plain-English answer."""
     prompt = build_answer_prompt(question, sql, rows)
     response = provider.complete(prompt)
-    return response.text
+    return GeneratedAnswer(text=response.text, raw_response=response)

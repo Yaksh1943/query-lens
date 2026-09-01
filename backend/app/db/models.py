@@ -38,6 +38,9 @@ class QueryHistory(Base):
 
     execution_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

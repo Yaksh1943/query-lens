@@ -27,7 +27,8 @@ def validate_sql(sql: str, schema: dict) -> ValidationResult:
     - Parses as exactly one statement
     - That statement is a SELECT
     - Every referenced table exists in the schema
-    - Every referenced column exists on some table in the schema
+    - Every referenced column exists on some table in the schema, OR
+      is a SELECT-clause alias defined within this query
     - Adds a LIMIT clause if one isn't present
     """
     errors: list[str] = []
@@ -62,6 +63,15 @@ def validate_sql(sql: str, schema: dict) -> ValidationResult:
         for col in table_info["columns"]
     }
 
+    # Aliases defined in the SELECT clause (e.g. SUM(x) AS total) are
+    # valid to reference elsewhere in the query (ORDER BY, HAVING),
+    # even though they aren't real schema columns.
+    defined_aliases = {
+        alias.alias.lower()
+        for alias in statement.find_all(exp.Alias)
+        if alias.alias
+    }
+
     referenced_tables = {t.name.lower() for t in statement.find_all(exp.Table)}
     unknown_tables = referenced_tables - known_tables
     if unknown_tables:
@@ -70,7 +80,7 @@ def validate_sql(sql: str, schema: dict) -> ValidationResult:
     referenced_columns = {
         c.name.lower() for c in statement.find_all(exp.Column) if c.name != "*"
     }
-    unknown_columns = referenced_columns - known_columns
+    unknown_columns = referenced_columns - known_columns - defined_aliases
     if unknown_columns:
         errors.append(f"Unknown column(s): {', '.join(sorted(unknown_columns))}")
 

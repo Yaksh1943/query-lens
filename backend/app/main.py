@@ -9,7 +9,7 @@ Run via Docker: see infrastructure/docker-compose.yml
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, query
+from app.api.routes import health, query, stats
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -33,7 +33,7 @@ app.add_middleware(
 
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(query.router, prefix="/api", tags=["query"])
-
+app.include_router(stats.router, prefix="/api", tags=["stats"])
 
 @app.get("/")
 def root() -> dict:
