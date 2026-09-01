@@ -1,0 +1,17 @@
+[
+  {"id": "u01", "type": "unambiguous", "question": "How many tracks are there in total?", "expected_sql": "SELECT COUNT(*) FROM track", "notes": "Simple count, no joins"},
+  {"id": "u02", "type": "unambiguous", "question": "How many customers are from Brazil?", "expected_sql": "SELECT COUNT(*) FROM customer WHERE country = 'Brazil'", "notes": "Filter on a single column"},
+  {"id": "u03", "type": "unambiguous", "question": "How many albums are there in total?", "expected_sql": "SELECT COUNT(*) FROM album", "notes": "Simple count"},
+  {"id": "u04", "type": "unambiguous", "question": "How many invoices are there in total?", "expected_sql": "SELECT COUNT(*) FROM invoice", "notes": "Simple count"},
+  {"id": "u05", "type": "unambiguous", "question": "What is the total revenue across all invoices?", "expected_sql": "SELECT SUM(total) FROM invoice", "notes": "Aggregation: SUM"},
+  {"id": "u06", "type": "unambiguous", "question": "What is the average unit price of tracks?", "expected_sql": "SELECT AVG(unit_price) FROM track", "notes": "Aggregation: AVG"},
+  {"id": "u07", "type": "unambiguous", "question": "How many distinct countries do customers come from?", "expected_sql": "SELECT COUNT(DISTINCT country) FROM customer", "notes": "Aggregation: DISTINCT"},
+  {"id": "u08", "type": "unambiguous", "question": "How many employees are there?", "expected_sql": "SELECT COUNT(*) FROM employee", "notes": "Simple count"},
+  {"id": "u09", "type": "unambiguous", "question": "How many media types are there?", "expected_sql": "SELECT COUNT(*) FROM media_type", "notes": "Simple count"},
+  {"id": "u10", "type": "unambiguous", "question": "How many tracks belong to the genre named 'Rock'?", "expected_sql": "SELECT COUNT(*) FROM track t JOIN genre g ON t.genre_id = g.genre_id WHERE g.name = 'Rock'", "notes": "Join + filter"},
+  {"id": "u11", "type": "unambiguous", "question": "How many tracks are on the album titled 'Let There Be Rock'?", "expected_sql": "SELECT COUNT(*) FROM track t JOIN album a ON t.album_id = a.album_id WHERE a.title = 'Let There Be Rock'", "notes": "Join + filter"},
+  {"id": "a01", "type": "ambiguous", "question": "Who are the top customers?", "expected_sql": null, "notes": "No metric specified - spending vs invoice count"},
+  {"id": "a02", "type": "ambiguous", "question": "What are the best selling tracks?", "expected_sql": null, "notes": "Best by revenue vs quantity sold is unclear"},
+  {"id": "a03", "type": "ambiguous", "question": "Show me recent invoices.", "expected_sql": null, "notes": "'Recent' is an unspecified time range"},
+  {"id": "a04", "type": "ambiguous", "question": "Which employees are performing well?", "expected_sql": null, "notes": "'Performance' metric not defined or present in schema"}
+]
