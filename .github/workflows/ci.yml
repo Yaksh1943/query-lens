@@ -29,4 +29,8 @@ jobs:
         run: ruff check .
 
       - name: Run tests
+        env:
+          APP_DATABASE_URL: "postgresql+psycopg://test:test@localhost:5432/test_app_db"
+          ANALYTICS_DATABASE_URL: "postgresql+psycopg://test:test@localhost:5432/test_analytics_db"
+          GEMINI_API_KEY: "dummy-key-for-ci"
         run: pytest -v
