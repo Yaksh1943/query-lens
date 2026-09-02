@@ -4,6 +4,8 @@ import QueryForm from './components/QueryForm'
 import ClarificationCard from './components/ClarificationCard'
 import TraceView from './components/TraceView'
 import StatsView from './components/StatsView'
+import InsightsView from './components/InsightsView'
+import ConnectionManager from './components/ConnectionManager'
 
 function App() {
   const [backendStatus, setBackendStatus] = useState('checking...')
@@ -11,6 +13,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
   const [activeTab, setActiveTab] = useState('query')
+  const [selectedConnectionId, setSelectedConnectionId] = useState(null)
 
   useEffect(() => {
     checkHealth()
@@ -22,7 +25,7 @@ function App() {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await runQuery({ question })
+      const data = await runQuery({ question, connectionId: selectedConnectionId })
       setResult(data)
     } catch (err) {
       setError(err.message)
@@ -80,10 +83,25 @@ function App() {
         >
           Stats
         </button>
+        <button
+          onClick={() => setActiveTab('insights')}
+          style={{
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            border: 'none',
+            background: activeTab === 'insights' ? '#4f6df5' : '#1a1d27',
+            color: '#fff',
+            cursor: 'pointer',
+          }}
+        >
+          Insights
+        </button>
       </div>
 
       {activeTab === 'query' && (
         <>
+          <ConnectionManager selectedConnectionId={selectedConnectionId} onSelect={setSelectedConnectionId} />
+
           <QueryForm onSubmit={handleAsk} isLoading={isLoading} />
 
           {error && (
@@ -105,6 +123,7 @@ function App() {
       )}
 
       {activeTab === 'stats' && <StatsView />}
+      {activeTab === 'insights' && <InsightsView />}
     </main>
   )
 }

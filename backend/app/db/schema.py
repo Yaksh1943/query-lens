@@ -1,26 +1,36 @@
 """
-Reads the schema of the analytics database (Chinook) via SQLAlchemy
-introspection and caches it for the lifetime of the server process.
+Reads the schema of a target analytics database via SQLAlchemy
+introspection and caches it per-engine for the lifetime of the server
+process.
+
+Takes an explicit engine rather than assuming a single global
+database — this is what makes multi-database support safe. Caching
+must be keyed per-engine, not global: with multiple databases, a
+single unkeyed cache would silently serve the wrong schema to every
+database after the first one introspected.
 
 Two entry points:
-- get_schema_snapshot()      -> structured dict, for code that needs
-                                 to reason about tables/columns (e.g.
-                                 sql_validation.py)
-- format_schema_for_prompt() -> compact text block, for injecting
-                                 into the LLM prompt (prompts.py)
+- get_schema_snapshot(engine)      -> structured dict, for code that
+                                       needs to reason about
+                                       tables/columns (e.g.
+                                       sql_validation.py)
+- format_schema_for_prompt(engine) -> compact text block, for
+                                       injecting into the LLM prompt
+                                       (prompts.py)
 """
-from functools import lru_cache
 from typing import Any
 
 from sqlalchemy import inspect
+from sqlalchemy.engine import Engine
 
-from app.db.session import analytics_engine
+_schema_cache: dict[int, dict[str, Any]] = {}
 
 
-@lru_cache(maxsize=1)
-def get_schema_snapshot() -> dict[str, Any]:
+def get_schema_snapshot(engine: Engine) -> dict[str, Any]:
     """
-    Introspects analytics_engine once and caches the result.
+    Introspects the given engine once per process and caches the
+    result, keyed by the engine's identity (id()) so different
+    databases never share a cache entry.
 
     Returns a dict shaped like:
     {
@@ -32,7 +42,11 @@ def get_schema_snapshot() -> dict[str, Any]:
         ...
     }
     """
-    inspector = inspect(analytics_engine)
+    cache_key = id(engine)
+    if cache_key in _schema_cache:
+        return _schema_cache[cache_key]
+
+    inspector = inspect(engine)
     snapshot: dict[str, Any] = {}
 
     for table_name in inspector.get_table_names():
@@ -64,19 +78,21 @@ def get_schema_snapshot() -> dict[str, Any]:
             "foreign_keys": foreign_keys,
         }
 
+    _schema_cache[cache_key] = snapshot
     return snapshot
 
 
-def format_schema_for_prompt() -> str:
+def format_schema_for_prompt(engine: Engine) -> str:
     """
-    Renders the cached schema snapshot as compact text for the LLM prompt.
+    Renders the cached schema snapshot for the given engine as compact
+    text for the LLM prompt.
 
     Example output per table:
 
     Table: albums
       Columns: AlbumId (INTEGER, PK), Title (VARCHAR), ArtistId (INTEGER, FK -> artists.ArtistId)
     """
-    snapshot = get_schema_snapshot()
+    snapshot = get_schema_snapshot(engine)
     lines: list[str] = []
 
     for table_name, info in snapshot.items():

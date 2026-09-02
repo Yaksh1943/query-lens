@@ -2,11 +2,17 @@
 Orchestrates SQL generation and answer generation by combining
 prompts.py (wording) + schema.py (context) + provider.py (LLM call).
 
+Takes an explicit engine (passed through to schema.py) rather than
+assuming a single global database — see app.db.schema and
+app.db.analytics for the same change and its rationale.
+
 No prompt text and no vendor SDK details live here — this file only
 wires the pieces together, so each piece stays independently testable.
 """
 import re
 from dataclasses import dataclass
+
+from sqlalchemy.engine import Engine
 
 from app.core.prompts import build_answer_prompt, build_sql_prompt
 from app.db.schema import format_schema_for_prompt
@@ -36,9 +42,9 @@ def _strip_code_fences(text: str) -> str:
     return _CODE_FENCE_RE.sub("", text).strip()
 
 
-def generate_sql(question: str, provider: LLMProvider) -> GeneratedSQL:
-    """Turns a natural-language question into a SQL query."""
-    schema_text = format_schema_for_prompt()
+def generate_sql(question: str, provider: LLMProvider, engine: Engine) -> GeneratedSQL:
+    """Turns a natural-language question into a SQL query, using the given database's schema."""
+    schema_text = format_schema_for_prompt(engine)
     prompt = build_sql_prompt(question, schema_text)
 
     response = provider.complete(prompt)

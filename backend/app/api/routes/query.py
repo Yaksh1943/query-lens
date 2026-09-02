@@ -1,16 +1,26 @@
 """
 POST /api/query — the full Text-to-SQL pipeline in one endpoint.
 
-Flow: check ambiguity -> generate SQL -> validate -> execute ->
-generate answer -> save history -> return response. Ambiguity and
-validation/execution failures are not server errors — they're the
-system correctly catching bad input, so they return 200 with
-success=False, not a 500.
+Flow: resolve the target database -> check ambiguity -> generate SQL
+-> validate -> execute -> generate answer -> save history -> return
+response. Ambiguity and validation/execution failures are not server
+errors — they're the system correctly catching bad input, so they
+return 200 with success=False, not a 500.
+
+Multi-database support: connection_id selects which database to
+query. None (the default) means the original built-in Chinook
+database from .env — see app.db.connection_manager for the
+resolution logic and caching. Every downstream call that touches the
+database (ambiguity check, SQL generation, validation, execution)
+receives the resolved engine explicitly rather than assuming a
+single global one.
 
 Follow-up flow: if trace_id + clarification_answer are given, the
-original question is looked up from history, merged with the answer,
-and run through the pipeline starting at SQL generation — the
-ambiguity check is skipped on this pass to avoid an infinite loop.
+original question (and its connection_id) is looked up from history,
+merged with the answer, and run through the pipeline starting at SQL
+generation — the ambiguity check is skipped on this pass to avoid an
+infinite loop, and the follow-up runs against the same database the
+original question targeted.
 
 Token usage from every LLM call on a request (ambiguity check, SQL
 generation, answer generation) is summed and saved to history, so
@@ -27,6 +37,7 @@ from app.core.config import get_settings
 from app.core.sql_generation import generate_answer, generate_sql
 from app.core.sql_validation import validate_sql
 from app.db.analytics import execute_query
+from app.db.connection_manager import get_engine_for_connection
 from app.db.models import QueryHistory
 from app.db.schema import get_schema_snapshot
 from app.db.session import get_db
@@ -40,6 +51,7 @@ class QueryRequest(BaseModel):
     question: str | None = None
     trace_id: int | None = None
     clarification_answer: str | None = None
+    connection_id: int | None = None
 
 
 class QueryResponse(BaseModel):
@@ -70,6 +82,7 @@ def _save_history(
     question: str,
     generated_sql: str,
     success: bool,
+    connection_id: int | None,
     result_summary: str | None = None,
     answer: str | None = None,
     clarification_question: str | None = None,
@@ -89,6 +102,7 @@ def _save_history(
         execution_ms=execution_ms,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        connection_id=connection_id,
     )
     db.add(history)
     db.commit()
@@ -101,18 +115,20 @@ def _run_pipeline(
     provider: GeminiProvider,
     db: Session,
     llm_responses: list[LLMResponse],
+    connection_id: int | None,
+    engine,
 ) -> QueryResponse:
     """
-    Runs SQL generation -> validation -> execution -> answer. No
-    ambiguity check. llm_responses accumulates every LLM call already
-    made on this request (e.g. the ambiguity check, if one ran), so
-    token totals saved to history reflect the whole request, not just
-    this function's own calls.
+    Runs SQL generation -> validation -> execution -> answer against
+    the given engine. No ambiguity check. llm_responses accumulates
+    every LLM call already made on this request (e.g. the ambiguity
+    check, if one ran), so token totals saved to history reflect the
+    whole request, not just this function's own calls.
     """
-    generated = generate_sql(question, provider)
+    generated = generate_sql(question, provider, engine)
     llm_responses.append(generated.raw_response)
 
-    schema = get_schema_snapshot()
+    schema = get_schema_snapshot(engine)
     validation = validate_sql(generated.sql, schema)
 
     if not validation.is_valid:
@@ -122,6 +138,7 @@ def _run_pipeline(
             question=question,
             generated_sql=generated.sql,
             success=False,
+            connection_id=connection_id,
             error="; ".join(validation.errors),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -135,7 +152,7 @@ def _run_pipeline(
             errors=validation.errors,
         )
 
-    query_result = execute_query(validation.sql)
+    query_result = execute_query(validation.sql, engine)
 
     if not query_result.success:
         input_tokens, output_tokens = _sum_tokens(llm_responses)
@@ -144,6 +161,7 @@ def _run_pipeline(
             question=question,
             generated_sql=validation.sql,
             success=False,
+            connection_id=connection_id,
             error=query_result.error,
             execution_ms=query_result.execution_ms,
             input_tokens=input_tokens,
@@ -173,6 +191,7 @@ def _run_pipeline(
         question=question,
         generated_sql=validation.sql,
         success=True,
+        connection_id=connection_id,
         result_summary=result_summary,
         answer=generated_answer.text,
         execution_ms=query_result.execution_ms,
@@ -214,14 +233,20 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
                 detail=f"No query history found for trace_id {request.trace_id}.",
             )
 
+        connection_id = original.connection_id
+        engine = get_engine_for_connection(connection_id, db)
+
         merged_question = f"{original.question} (Clarification: {request.clarification_answer})"
-        return _run_pipeline(merged_question, provider, db, llm_responses=[])
+        return _run_pipeline(merged_question, provider, db, llm_responses=[], connection_id=connection_id, engine=engine)
 
     if not request.question:
         raise HTTPException(status_code=400, detail="question is required.")
 
+    connection_id = request.connection_id
+    engine = get_engine_for_connection(connection_id, db)
+
     # Fresh question: check ambiguity first
-    ambiguity = detect_ambiguity(request.question, provider)
+    ambiguity = detect_ambiguity(request.question, provider, engine)
     llm_responses = [ambiguity.raw_response]
 
     if ambiguity.is_ambiguous:
@@ -231,6 +256,7 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
             question=request.question,
             generated_sql="",
             success=False,
+            connection_id=connection_id,
             clarification_question=ambiguity.clarification_question,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -245,4 +271,4 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
             errors=[],
         )
 
-    return _run_pipeline(request.question, provider, db, llm_responses)
+    return _run_pipeline(request.question, provider, db, llm_responses, connection_id=connection_id, engine=engine)

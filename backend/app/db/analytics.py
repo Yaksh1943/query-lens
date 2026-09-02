@@ -1,5 +1,10 @@
 """
-Executes validated SQL against the analytics database (Chinook).
+Executes validated SQL against a target analytics database.
+
+Takes an explicit engine rather than assuming a single global
+database — mirrors the same change in app.db.schema, for the same
+reason: multi-database support requires every DB-touching function
+to operate on a caller-provided engine, not an implicit global one.
 
 Assumes the SQL passed in has already been checked by
 app.core.sql_validation.validate_sql() — this file only runs it and
@@ -9,9 +14,8 @@ import time
 from dataclasses import dataclass, field
 
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
-
-from app.db.session import analytics_engine
 
 
 @dataclass
@@ -24,12 +28,12 @@ class QueryResult:
     error: str | None = None
 
 
-def execute_query(sql: str) -> QueryResult:
-    """Runs a validated SELECT statement against the analytics database."""
+def execute_query(sql: str, engine: Engine) -> QueryResult:
+    """Runs a validated SELECT statement against the given engine."""
     start = time.monotonic()
 
     try:
-        with analytics_engine.connect() as conn:
+        with engine.connect() as conn:
             result = conn.execute(text(sql))
             columns = list(result.keys())
             rows = [dict(zip(columns, row)) for row in result.fetchall()]

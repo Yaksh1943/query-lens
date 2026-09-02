@@ -22,10 +22,13 @@ model would have generated blind, for comparison.
 
 Token tracking: every LLM call made in each mode is summed, so the
 report can show the real token cost of the ambiguity-check safety
-net (ON) versus generating blind (OFF) — on unambiguous questions
-this is a pure overhead cost (one extra call, no benefit); on
-ambiguous questions it's what buys the correct behavior at all,
-since OFF has no way to avoid a wrong or misleading answer.
+net (ON) versus generating blind (OFF).
+
+Two outputs are written per run:
+- report.md   — human-readable, for the repo/README
+- report.json — structured, consumed live by GET /api/insights and
+  rendered on the frontend's Insights page. Includes a generated_at
+  timestamp so staleness is always visible, never silent.
 
 Row comparison limitation, stated plainly: rows are compared as
 value-multisets with column names and row order ignored (so an
@@ -35,14 +38,15 @@ happen to reduce to the same values would count as a match. Fine for
 this test set's aggregation-heavy questions; would need tightening
 for a larger or more adversarial suite.
 
-Pacing: rate limiting now lives in app.llm.provider.GeminiProvider
-itself (throttled to stay under the free-tier requests-per-minute
-cap), so this script doesn't need its own delay between cases.
+Pacing: rate limiting lives in app.llm.provider.GeminiProvider itself
+(throttled to stay under the free-tier requests-per-minute cap), so
+this script doesn't need its own delay between cases.
 """
 import argparse
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.ambiguity import detect_ambiguity
@@ -54,7 +58,8 @@ from app.db.schema import get_schema_snapshot
 from app.llm.provider import GeminiProvider, LLMResponse
 
 DEFAULT_TEST_FILE = Path(__file__).parent / "test_cases.json"
-DEFAULT_REPORT_FILE = Path(__file__).parent / "report.md"
+DEFAULT_REPORT_MD = Path(__file__).parent / "report.md"
+DEFAULT_REPORT_JSON = Path(__file__).parent / "report.json"
 
 
 @dataclass
@@ -171,7 +176,8 @@ def evaluate_case(case: dict, schema: dict, provider: GeminiProvider) -> CaseRes
     return result
 
 
-def build_report(results: list[CaseResult], elapsed_s: float) -> str:
+def build_summary(results: list[CaseResult]) -> dict:
+    """Shared summary numbers used by both the Markdown and JSON reports."""
     unambiguous = [r for r in results if r.case_type == "unambiguous"]
     ambiguous = [r for r in results if r.case_type == "ambiguous"]
 
@@ -185,20 +191,37 @@ def build_report(results: list[CaseResult], elapsed_s: float) -> str:
     avg_off_tokens = total_off_tokens / len(results) if results else 0
     token_overhead_pct = ((total_on_tokens - total_off_tokens) / total_off_tokens * 100) if total_off_tokens else 0
 
+    return {
+        "total_cases": len(results),
+        "unambiguous_cases": len(unambiguous),
+        "ambiguous_cases": len(ambiguous),
+        "execution_accuracy_on": on_acc,
+        "execution_accuracy_off": off_acc,
+        "ambiguity_catch_rate": on_catch,
+        "total_tokens_on": total_on_tokens,
+        "total_tokens_off": total_off_tokens,
+        "avg_tokens_on": avg_on_tokens,
+        "avg_tokens_off": avg_off_tokens,
+        "token_overhead_pct": token_overhead_pct,
+    }
+
+
+def build_report_md(results: list[CaseResult], summary: dict, elapsed_s: float) -> str:
+    unambiguous = [r for r in results if r.case_type == "unambiguous"]
+    ambiguous = [r for r in results if r.case_type == "ambiguous"]
+
     lines = [
         "# QueryLens Evaluation Report",
         "",
-        f"Total cases: {len(results)} ({len(unambiguous)} unambiguous, {len(ambiguous)} ambiguous)",
+        f"Total cases: {summary['total_cases']} "
+        f"({summary['unambiguous_cases']} unambiguous, {summary['ambiguous_cases']} ambiguous)",
         f"Run time: {elapsed_s:.1f}s",
         "",
         "## Accuracy Summary",
         "",
-        f"- **Execution accuracy, ambiguity check ON:** {on_acc:.0%} "
-        f"({sum(1 for r in unambiguous if r.on_passed)}/{len(unambiguous)})",
-        f"- **Execution accuracy, ambiguity check OFF:** {off_acc:.0%} "
-        f"({sum(1 for r in unambiguous if r.off_passed)}/{len(unambiguous)})",
-        f"- **Ambiguity catch rate (ON only):** {on_catch:.0%} "
-        f"({sum(1 for r in ambiguous if r.on_passed)}/{len(ambiguous)})",
+        f"- **Execution accuracy, ambiguity check ON:** {summary['execution_accuracy_on']:.0%}",
+        f"- **Execution accuracy, ambiguity check OFF:** {summary['execution_accuracy_off']:.0%}",
+        f"- **Ambiguity catch rate (ON only):** {summary['ambiguity_catch_rate']:.0%}",
         "",
         "The ambiguity check is expected to make no difference to accuracy on "
         "clearly-specified questions (ON and OFF should match), and to be the "
@@ -207,11 +230,11 @@ def build_report(results: list[CaseResult], elapsed_s: float) -> str:
         "",
         "## Token Cost Summary",
         "",
-        f"- **Total tokens, ambiguity check ON:** {total_on_tokens:,}",
-        f"- **Total tokens, ambiguity check OFF:** {total_off_tokens:,}",
-        f"- **Average tokens per question, ON:** {avg_on_tokens:,.0f}",
-        f"- **Average tokens per question, OFF:** {avg_off_tokens:,.0f}",
-        f"- **Overhead of the ambiguity check:** {token_overhead_pct:+.1f}%",
+        f"- **Total tokens, ambiguity check ON:** {summary['total_tokens_on']:,}",
+        f"- **Total tokens, ambiguity check OFF:** {summary['total_tokens_off']:,}",
+        f"- **Average tokens per question, ON:** {summary['avg_tokens_on']:,.0f}",
+        f"- **Average tokens per question, OFF:** {summary['avg_tokens_off']:,.0f}",
+        f"- **Overhead of the ambiguity check:** {summary['token_overhead_pct']:+.1f}%",
         "",
         "On unambiguous questions, ON mode costs one extra LLM call (the "
         "ambiguity check itself) with no accuracy benefit - pure overhead. "
@@ -264,10 +287,24 @@ def build_report(results: list[CaseResult], elapsed_s: float) -> str:
     return "\n".join(lines)
 
 
+def build_report_json(results: list[CaseResult], summary: dict, elapsed_s: float) -> dict:
+    """
+    Structured version of the same report, consumed live by
+    GET /api/insights and rendered on the frontend's Insights page.
+    """
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "run_time_seconds": round(elapsed_s, 1),
+        "summary": summary,
+        "cases": [asdict(r) for r in results],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the QueryLens evaluation harness.")
     parser.add_argument("--test-file", type=Path, default=DEFAULT_TEST_FILE)
-    parser.add_argument("--output", type=Path, default=DEFAULT_REPORT_FILE)
+    parser.add_argument("--output-md", type=Path, default=DEFAULT_REPORT_MD)
+    parser.add_argument("--output-json", type=Path, default=DEFAULT_REPORT_JSON)
     args = parser.parse_args()
 
     settings = get_settings()
@@ -284,12 +321,16 @@ def main() -> None:
         results.append(evaluate_case(case, schema, provider))
 
     elapsed_s = time.monotonic() - start
+    summary = build_summary(results)
 
-    report = build_report(results, elapsed_s)
-    args.output.write_text(report, encoding="utf-8")
+    args.output_md.write_text(build_report_md(results, summary, elapsed_s), encoding="utf-8")
+    args.output_json.write_text(
+        json.dumps(build_report_json(results, summary, elapsed_s), indent=2),
+        encoding="utf-8",
+    )
 
     print(f"\nEvaluated {len(results)} cases in {elapsed_s:.1f}s")
-    print(f"Report written to {args.output}")
+    print(f"Reports written to {args.output_md} and {args.output_json}")
 
 
 if __name__ == "__main__":

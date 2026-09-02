@@ -40,7 +40,26 @@ class QueryHistory(Base):
 
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    connection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+class DatabaseConnection(Base):
+    """
+    A user-added database connection to query via natural language.
+    connection_url_encrypted is a Fernet token (see app.core.crypto)
+    — the raw connection string is never stored or logged in plaintext.
+    """
+
+    __tablename__ = "database_connection"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    connection_url_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

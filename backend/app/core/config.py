@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # --- Environment ---
     environment: str = Field(default="local")
 
+    encryption_key: str = Field(
+        description="Fernet key used to encrypt stored database connection strings.",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
