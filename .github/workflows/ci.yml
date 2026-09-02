@@ -33,4 +33,5 @@ jobs:
           APP_DATABASE_URL: "postgresql+psycopg://test:test@localhost:5432/test_app_db"
           ANALYTICS_DATABASE_URL: "postgresql+psycopg://test:test@localhost:5432/test_analytics_db"
           GEMINI_API_KEY: "dummy-key-for-ci"
+          ENCRYPTION_KEY: "aDPBKXQ8r1Sub1kjOUNgoX7fb7WIIv_AQER6Pn06wnU="
         run: pytest -v
