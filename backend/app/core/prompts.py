@@ -86,3 +86,30 @@ in exactly this shape:
 {{"is_ambiguous": true or false, "clarification_question": "a single, specific question \
 to ask the user, or null if not ambiguous", "reasoning": "one short sentence explaining \
 your judgment"}}"""
+
+def build_table_selection_prompt(question: str, table_list_text: str) -> str:
+    """
+    Builds the stage-1 prompt for two-stage schema retrieval: asks the
+    LLM which tables (by name only, no column detail) are relevant to
+    a question, before paying for full schema detail on just those
+    tables. See app.core.schema_selection for when this stage is used.
+    """
+    return f"""You are a PostgreSQL expert helping to scope which tables are needed to answer a question, \
+before writing any SQL. You will NOT write SQL yet — you are only selecting relevant tables.
+
+Available tables (name and column count only):
+{table_list_text}
+
+Question: {question}
+
+Rules:
+- Select every table that would actually be needed to answer this question, including tables \
+needed only for joins (e.g. a question about "customers by spending" needs both the customers \
+table and whatever table records purchases/invoices, even though "invoice" isn't mentioned).
+- Prefer including a table you're unsure about over leaving out one you'll actually need — \
+missing a required table will make the question unanswerable, while an extra table is harmless.
+- Use the exact table names as given above.
+
+Respond with ONLY a raw JSON array of table names, no markdown fences, no explanation, in \
+exactly this shape:
+["table_one", "table_two"]"""

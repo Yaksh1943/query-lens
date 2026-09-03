@@ -58,6 +58,7 @@ function StatsView() {
         <StatCard label="Total queries" value={stats.total_queries} />
         <StatCard label="Success rate" value={`${(stats.success_rate * 100).toFixed(0)}%`} />
         <StatCard label="Ambiguity caught" value={`${(stats.ambiguity_rate * 100).toFixed(0)}%`} />
+        <StatCard label="Cache hit rate" value={`${(stats.cache_hit_rate * 100).toFixed(0)}%`} />
         <StatCard label="Avg. execution time" value={`${stats.avg_execution_ms.toFixed(0)} ms`} />
         <StatCard label="Avg. input tokens" value={stats.avg_input_tokens.toFixed(0)} />
         <StatCard label="Avg. output tokens" value={stats.avg_output_tokens.toFixed(0)} />

@@ -23,6 +23,7 @@ class StatsResponse(BaseModel):
     success_rate: float
     ambiguous_queries: int
     ambiguity_rate: float
+    cache_hit_rate: float
     avg_execution_ms: float
     avg_input_tokens: float
     avg_output_tokens: float
@@ -40,6 +41,7 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
             success_rate=0.0,
             ambiguous_queries=0,
             ambiguity_rate=0.0,
+            cache_hit_rate=0.0,
             avg_execution_ms=0.0,
             avg_input_tokens=0.0,
             avg_output_tokens=0.0,
@@ -52,6 +54,10 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
 
     ambiguous_queries = db.scalar(
         select(func.count(QueryHistory.id)).where(QueryHistory.clarification_question.is_not(None))
+    ) or 0
+
+    cache_hits = db.scalar(
+        select(func.count(QueryHistory.id)).where(QueryHistory.served_from_cache.is_(True))
     ) or 0
 
     avg_execution_ms = db.scalar(select(func.avg(QueryHistory.execution_ms))) or 0.0
@@ -68,6 +74,7 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
         success_rate=successful_queries / total_queries,
         ambiguous_queries=ambiguous_queries,
         ambiguity_rate=ambiguous_queries / total_queries,
+        cache_hit_rate=cache_hits / total_queries,
         avg_execution_ms=float(avg_execution_ms),
         avg_input_tokens=float(avg_input_tokens),
         avg_output_tokens=float(avg_output_tokens),

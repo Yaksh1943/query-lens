@@ -6,6 +6,11 @@ Takes an explicit engine (passed through to schema.py) rather than
 assuming a single global database — see app.db.schema and
 app.db.analytics for the same change and its rationale.
 
+Optionally accepts table_names to scope the schema included in the
+prompt to just those tables — see app.core.schema_selection for when
+this is used (large schemas only; None means "use every table",
+which is correct for small-to-medium databases).
+
 No prompt text and no vendor SDK details live here — this file only
 wires the pieces together, so each piece stays independently testable.
 """
@@ -42,9 +47,19 @@ def _strip_code_fences(text: str) -> str:
     return _CODE_FENCE_RE.sub("", text).strip()
 
 
-def generate_sql(question: str, provider: LLMProvider, engine: Engine) -> GeneratedSQL:
-    """Turns a natural-language question into a SQL query, using the given database's schema."""
-    schema_text = format_schema_for_prompt(engine)
+def generate_sql(
+    question: str,
+    provider: LLMProvider,
+    engine: Engine,
+    table_names: list[str] | None = None,
+) -> GeneratedSQL:
+    """
+    Turns a natural-language question into a SQL query, using the
+    given database's schema. If table_names is given, only those
+    tables' full detail is included in the prompt (see
+    app.core.schema_selection).
+    """
+    schema_text = format_schema_for_prompt(engine, table_names=table_names)
     prompt = build_sql_prompt(question, schema_text)
 
     response = provider.complete(prompt)

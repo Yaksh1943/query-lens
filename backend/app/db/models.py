@@ -41,7 +41,7 @@ class QueryHistory(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     connection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
+    served_from_cache: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -61,6 +61,46 @@ class DatabaseConnection(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     connection_url_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+class QueryCache(Base):
+    """
+    Caches the validated SQL for a given (connection, question) pair,
+    so a repeated question skips the ambiguity check, table selection,
+    and SQL generation LLM calls entirely.
+
+    Deliberately caches SQL, not the final answer or result rows: the
+    query is always re-executed fresh and the answer always
+    regenerated from live data, so a cache hit can never return stale
+    or incorrect information — only the LLM calls that don't need to
+    change once a phrasing is known to work are skipped.
+
+    Exact-match only (question_normalized is a simple lowercase/trim
+    normalization, not semantic matching) — a differently-worded but
+    equivalent question is a cache miss. Semantic matching would need
+    embeddings/a vector store (see e.g. GPTCache, Redis LangCache) —
+    a legitimate future improvement, scoped out here since it crosses
+    into infrastructure this project deliberately avoids.
+    """
+
+    __tablename__ = "query_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    connection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    question_normalized: Mapped[str] = mapped_column(Text, nullable=False)
+    sql: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_ambiguous: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    clarification_question: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    last_used_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
