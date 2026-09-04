@@ -21,6 +21,9 @@ from sqlalchemy.orm import Session
 from app.core.crypto import encrypt
 from app.db.models import DatabaseConnection
 from app.db.session import get_db
+from app.observability.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -37,15 +40,14 @@ class ConnectionResponse(BaseModel):
 
 
 def _test_connection(connection_url: str) -> None:
-    """Raises HTTPException if the given URL can't actually be connected to."""
     try:
         test_engine = create_engine(connection_url, pool_pre_ping=True)
         with test_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         test_engine.dispose()
     except SQLAlchemyError as e:
+        logger.warning("Connection test failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Could not connect to database: {e}")
-
 
 @router.post("/connections", response_model=ConnectionResponse)
 def create_connection(request: ConnectionCreateRequest, db: Session = Depends(get_db)) -> ConnectionResponse:
@@ -58,6 +60,8 @@ def create_connection(request: ConnectionCreateRequest, db: Session = Depends(ge
     db.add(connection)
     db.commit()
     db.refresh(connection)
+
+    logger.info("New database connection added: %s (id=%d)", connection.name, connection.id)
 
     return ConnectionResponse(id=connection.id, name=connection.name, created_at=connection.created_at)
 

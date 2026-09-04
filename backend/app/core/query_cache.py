@@ -1,12 +1,12 @@
 """
 Exact-match cache for validated SQL, keyed by (connection, normalized
-question). See app.db.models.QueryCache for the full rationale: this
-skips the ambiguity check, table selection, and SQL generation LLM
-calls on a cache hit, while always re-executing fresh and
-regenerating the answer, so results can never go stale.
+question). A cache hit skips the ambiguity check, table selection,
+and SQL generation LLM calls — the query is still re-executed fresh
+and the answer regenerated, so results can never go stale.
 
-Exact-match only — see QueryCache's docstring for why semantic
-matching is deliberately out of scope here.
+Exact-match only: different phrasings of the same question are cache
+misses. Semantic matching (e.g. via GPTCache or embeddings) would
+catch those too but needs a vector store — out of scope here.
 """
 import re
 

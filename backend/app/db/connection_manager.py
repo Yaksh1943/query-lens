@@ -2,15 +2,9 @@
 Resolves a connection_id to a live SQLAlchemy engine, building and
 caching engines for user-added databases on demand.
 
-connection_id=None is a reserved sentinel meaning "use the original
-built-in analytics database from .env" (app.db.session.analytics_engine)
-— this keeps every existing call site working unchanged for anyone
-not using the multi-database feature.
-
-Engines are cached per connection_id at module scope: creating a new
-engine (and its connection pool) on every request would be wasteful
-and slow, exactly the problem the original single global
-analytics_engine avoided by being created once at import time.
+connection_id=None means "use the built-in database from .env".
+Engines are cached per connection_id so repeated queries reuse the
+same connection pool instead of creating a new one every request.
 """
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine

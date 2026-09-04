@@ -1,43 +1,11 @@
 """
-POST /api/query — the full Text-to-SQL pipeline in one endpoint.
+POST /api/query — the Text-to-SQL pipeline: resolve database ->
+check cache -> check ambiguity -> select tables -> generate SQL ->
+validate -> execute -> generate answer -> save history.
 
-Flow: resolve the target database -> check cache -> (if miss) check
-ambiguity -> select relevant tables (large schemas only) -> generate
-SQL -> validate -> execute -> generate answer -> save history ->
-return response. Ambiguity and validation/execution failures are not
-server errors — they're the system correctly catching bad input, so
-they return 200 with success=False, not a 500.
-
-Caching: a cache hit skips the ambiguity check, table selection, and
-SQL generation LLM calls — the query is still always re-executed
-fresh and the answer always regenerated from live data, so a cache
-hit can never return stale or incorrect information. See
-app.core.query_cache for the exact-match cache itself and its stated
-limitations (no semantic matching).
-
-Multi-database support: connection_id selects which database to
-query. None (the default) means the original built-in Chinook
-database from .env — see app.db.connection_manager for the
-resolution logic and caching. Every downstream call that touches the
-database receives the resolved engine explicitly rather than
-assuming a single global one.
-
-Schema scaling: for databases with more tables than
-schema_selection.TABLE_COUNT_THRESHOLD, a cheap first LLM call
-narrows down to relevant tables before the real SQL-generation prompt
-includes their full column detail — see app.core.schema_selection.
-
-Follow-up flow: if trace_id + clarification_answer are given, the
-original question (and its connection_id) is looked up from history,
-merged with the answer, and run through the pipeline starting at
-table selection / SQL generation — the ambiguity check and cache
-lookup are both skipped on this pass, since a merged follow-up
-question is unlikely to be a repeat and skipping avoids an infinite
-loop either way.
-
-Token usage from every LLM call actually made on a request is summed
-and saved to history, so real usage — including the drop from cache
-hits — can be reported via /api/stats.
+See app.core.query_cache, app.core.schema_selection, and
+app.db.connection_manager for the caching, schema-scaling, and
+multi-database logic this route orchestrates.
 """
 import json
 
@@ -57,9 +25,11 @@ from app.db.models import QueryHistory
 from app.db.schema import get_schema_snapshot
 from app.db.session import get_db
 from app.llm.provider import GeminiProvider, LLMResponse
+from app.observability.logger import get_logger
 
 router = APIRouter()
 settings = get_settings()
+logger = get_logger(__name__)
 
 
 class QueryRequest(BaseModel):
@@ -84,11 +54,15 @@ def _sample_rows(rows: list[dict], limit: int = 3) -> list[dict]:
 
 
 def _sum_tokens(responses: list[LLMResponse]) -> tuple[int, int]:
-    """Sums input/output tokens across every LLM call made on this request."""
     return (
         sum(r.input_tokens for r in responses),
         sum(r.output_tokens for r in responses),
     )
+
+
+def _short(text: str, limit: int = 80) -> str:
+    """Truncates a question for logging, so long inputs don't bloat log lines."""
+    return text if len(text) <= limit else text[:limit] + "..."
 
 
 def _save_history(
@@ -137,16 +111,13 @@ def _finish_with_sql(
     engine,
     served_from_cache: bool,
 ) -> QueryResponse:
-    """
-    Shared tail end of the pipeline: validate -> execute -> generate
-    answer -> save history -> return. Used by both the cache-hit path
-    (sql already known) and the cache-miss path (sql just generated).
-    """
+    """Validate -> execute -> generate answer -> save history. Shared by cache-hit and cache-miss paths."""
     schema = get_schema_snapshot(engine)
     validation = validate_sql(sql, schema)
 
     if not validation.is_valid:
         input_tokens, output_tokens = _sum_tokens(llm_responses)
+        logger.warning("Validation failed: %s | question=%s", "; ".join(validation.errors), _short(question))
         history = _save_history(
             db,
             question=question,
@@ -171,6 +142,7 @@ def _finish_with_sql(
 
     if not query_result.success:
         input_tokens, output_tokens = _sum_tokens(llm_responses)
+        logger.warning("Execution failed: %s | question=%s", query_result.error, _short(question))
         history = _save_history(
             db,
             question=question,
@@ -219,6 +191,11 @@ def _finish_with_sql(
     if not served_from_cache:
         save_to_cache(question, connection_id, db, sql=validation.sql, is_ambiguous=False)
 
+    logger.info(
+        "Query succeeded | cache=%s | tokens=%d | exec_ms=%.0f | question=%s",
+        served_from_cache, input_tokens + output_tokens, query_result.execution_ms, _short(question),
+    )
+
     return QueryResponse(
         trace_id=history.id,
         sql=validation.sql,
@@ -245,6 +222,7 @@ def _run_pipeline_no_ambiguity_check(
     selection = select_relevant_tables(question, provider, engine)
     if selection.raw_response is not None:
         llm_responses.append(selection.raw_response)
+        logger.info("Table selection engaged | selected=%s", selection.table_names)
 
     generated = generate_sql(question, provider, engine, table_names=selection.table_names)
     llm_responses.append(generated.raw_response)
@@ -278,6 +256,7 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
         engine = get_engine_for_connection(connection_id, db)
 
         merged_question = f"{original.question} (Clarification: {request.clarification_answer})"
+        logger.info("Follow-up received | trace_id=%d", request.trace_id)
         return _run_pipeline_no_ambiguity_check(
             merged_question, provider, db, llm_responses=[], connection_id=connection_id, engine=engine
         )
@@ -288,10 +267,13 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
     connection_id = request.connection_id
     engine = get_engine_for_connection(connection_id, db)
 
-    # Check cache before spending anything on the LLM.
+    logger.info("Question received | connection_id=%s | question=%s", connection_id, _short(request.question))
+
     cached = get_cached(request.question, connection_id, db)
 
     if cached is not None:
+        logger.info("Cache hit | hit_count=%d", cached.hit_count)
+
         if cached.is_ambiguous:
             history = _save_history(
                 db,
@@ -318,11 +300,13 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
                 connection_id=connection_id, engine=engine, served_from_cache=True,
             )
 
-    # Cache miss: check ambiguity first, same as before.
+    logger.info("Cache miss")
+
     ambiguity = detect_ambiguity(request.question, provider, engine)
     llm_responses = [ambiguity.raw_response]
 
     if ambiguity.is_ambiguous:
+        logger.info("Ambiguity detected")
         input_tokens, output_tokens = _sum_tokens(llm_responses)
         history = _save_history(
             db,

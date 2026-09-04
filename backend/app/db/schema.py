@@ -1,34 +1,11 @@
 """
-Reads the schema of a target analytics database via SQLAlchemy
-introspection and caches it per-engine for the lifetime of the server
-process.
+Reads and caches a target database's schema via SQLAlchemy
+introspection. Takes an explicit engine (not a global one) so
+multiple databases can be introspected safely, each with its own
+cache entry — see app.db.connection_manager.
 
-Takes an explicit engine rather than assuming a single global
-database — this is what makes multi-database support safe. Caching
-must be keyed per-engine, not global: with multiple databases, a
-single unkeyed cache would silently serve the wrong schema to every
-database after the first one introspected.
-
-Scaling note: format_schema_for_prompt() dumps every table's full
-column detail into the LLM prompt. That's fine for small schemas
-(Chinook's 11 tables) but doesn't scale — a database with hundreds of
-tables would blow up both token cost and accuracy (LLMs get worse at
-picking the right table when flooded with irrelevant ones). For large
-schemas, app.core.schema_selection does a cheap first pass (table
-names only) to narrow down to relevant tables before this module
-formats their full detail — see get_table_summaries and the
-table_names parameter on format_schema_for_prompt below.
-
-Entry points:
-- get_schema_snapshot(engine)                  -> full structured
-  dict for every table, for code that needs to reason about
-  tables/columns (e.g. sql_validation.py, which must validate against
-  the whole schema regardless of what was "selected" for a prompt)
-- get_table_summaries(engine)                  -> lightweight list of
-  {name, column_count} for every table, cheap to send to an LLM for
-  table-selection without the full column detail
-- format_schema_for_prompt(engine, table_names) -> compact text block
-  for the LLM prompt, optionally filtered to only the given tables
+format_schema_for_prompt() can optionally filter to specific tables
+(table_names) — used for large schemas, see app.core.schema_selection.
 """
 from typing import Any
 

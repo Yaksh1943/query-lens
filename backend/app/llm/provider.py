@@ -2,9 +2,7 @@
 LLM provider abstraction.
 
 The rest of the codebase depends only on the LLMProvider interface,
-never on a specific vendor SDK. This is what lets us swap Gemini for
-another free-tier provider (e.g. OpenRouter) later without touching
-any business logic — see docs/blueprint for the reasoning.
+never on a specific vendor SDK.
 """
 import re
 import time
@@ -13,6 +11,10 @@ from dataclasses import dataclass
 
 from google import genai
 from google.genai import errors, types
+
+from app.observability.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -24,11 +26,8 @@ class LLMResponse:
 
 
 class LLMProvider(ABC):
-    """Contract every LLM provider adapter must satisfy."""
-
     @abstractmethod
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
-        """Send a prompt, return the raw completion plus usage metadata."""
         raise NotImplementedError
 
 
@@ -37,23 +36,28 @@ class GeminiProvider(LLMProvider):
 
     MAX_RETRIES = 3
     DEFAULT_BACKOFF_S = 15.0
+    MIN_SECONDS_BETWEEN_CALLS = 13.0  # free tier: 5 requests/minute
+    SERVER_ERROR_BACKOFF_S = 5.0  # for transient 5xx, shorter backoff than a real rate-limit wait
+
+    _last_call_time: float = 0.0
 
     def __init__(self, api_key: str, model: str = "gemini-3.6-flash") -> None:
         self.api_key = api_key
         self.model = model
         self.client = genai.Client(api_key=self.api_key)
 
+    def _throttle(self) -> None:
+        elapsed = time.monotonic() - GeminiProvider._last_call_time
+        if elapsed < self.MIN_SECONDS_BETWEEN_CALLS:
+            time.sleep(self.MIN_SECONDS_BETWEEN_CALLS - elapsed)
+        GeminiProvider._last_call_time = time.monotonic()
+
     def _extract_retry_delay(self, error: errors.ClientError) -> float:
-        """
-        Gemini's 429 response includes a RetryInfo block with the exact
-        number of seconds to wait. Fall back to a fixed backoff if it's
-        not present or unparseable, rather than failing the whole call.
-        """
         try:
             details = error.details.get("error", {}).get("details", [])
             for d in details:
                 if d.get("@type", "").endswith("RetryInfo"):
-                    delay_str = d.get("retryDelay", "")  # e.g. "41s"
+                    delay_str = d.get("retryDelay", "")
                     match = re.match(r"([\d.]+)s", delay_str)
                     if match:
                         return float(match.group(1))
@@ -65,6 +69,7 @@ class GeminiProvider(LLMProvider):
         config = types.GenerateContentConfig(system_instruction=system) if system else None
 
         for attempt in range(self.MAX_RETRIES + 1):
+            self._throttle()
             start = time.monotonic()
             try:
                 response = self.client.models.generate_content(
@@ -85,8 +90,17 @@ class GeminiProvider(LLMProvider):
             except errors.ClientError as e:
                 if e.code == 429 and attempt < self.MAX_RETRIES:
                     delay = self._extract_retry_delay(e)
-                    print(f"[GeminiProvider] Rate limited, retrying in {delay:.0f}s "
-                          f"(attempt {attempt + 1}/{self.MAX_RETRIES})...")
+                    logger.warning("Rate limited, retrying in %.0fs (attempt %d/%d)", delay, attempt + 1, self.MAX_RETRIES)
                     time.sleep(delay)
+                    continue
+                raise
+
+            except errors.ServerError as e:
+                if attempt < self.MAX_RETRIES:
+                    logger.warning(
+                        "Gemini server error (%s), retrying in %.0fs (attempt %d/%d)",
+                        e.code, self.SERVER_ERROR_BACKOFF_S, attempt + 1, self.MAX_RETRIES,
+                    )
+                    time.sleep(self.SERVER_ERROR_BACKOFF_S)
                     continue
                 raise

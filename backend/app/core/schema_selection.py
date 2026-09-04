@@ -18,7 +18,9 @@ from sqlalchemy.engine import Engine
 from app.core.prompts import build_table_selection_prompt
 from app.db.schema import format_table_list_for_prompt, get_table_summaries
 from app.llm.provider import LLMProvider, LLMResponse
+from app.observability.logger import get_logger
 
+logger = get_logger(__name__)
 TABLE_COUNT_THRESHOLD = 20
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
@@ -59,9 +61,8 @@ def select_relevant_tables(question: str, provider: LLMProvider, engine: Engine)
         # Defensive: only trust names that actually exist in the schema.
         valid_selected = [name for name in selected if name in known_names]
         if not valid_selected:
-            # Fail safe: an empty or garbage selection is worse than
-            # using the full schema, not better.
             return TableSelectionResult(table_names=None, used_selection=False, raw_response=response)
+        logger.info("Schema too large for full dump (%d tables) — selected: %s", len(summaries), valid_selected)
         return TableSelectionResult(table_names=valid_selected, used_selection=True, raw_response=response)
     except (json.JSONDecodeError, TypeError):
         return TableSelectionResult(table_names=None, used_selection=False, raw_response=response)
