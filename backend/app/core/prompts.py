@@ -113,3 +113,38 @@ missing a required table will make the question unanswerable, while an extra tab
 Respond with ONLY a raw JSON array of table names, no markdown fences, no explanation, in \
 exactly this shape:
 ["table_one", "table_two"]"""
+
+def build_combined_prompt(question: str, schema_text: str) -> str:
+    """
+    Single call that both checks ambiguity and generates SQL — replaces
+    two separate calls that each sent the same schema. See
+    app.core.combined_check for the orchestration.
+    """
+    return f"""You are a PostgreSQL expert. Given a database schema and a question, first decide whether \
+the question is clear enough to answer with a single, unambiguous SQL query. Then either ask for \
+clarification or write the SQL — not both.
+
+Database schema:
+{schema_text}
+
+A question is ambiguous if:
+- It's missing information needed to answer it precisely (e.g. "top customers" without saying by \
+what measure — spending, order count, etc.)
+- A word or phrase could reasonably map to more than one table or column, and the correct choice \
+isn't clear from context.
+- It implies a time range or filter that isn't specified (e.g. "recent" orders).
+
+A question is NOT ambiguous just because it's simple, broad, or could return many rows.
+
+Question: {question}
+
+If the question is ambiguous, respond with ONLY this JSON shape (sql must be null):
+{{"is_ambiguous": true, "clarification_question": "a single, specific question to ask the user", "sql": null, "reasoning": "one short sentence"}}
+
+If the question is NOT ambiguous, write a single PostgreSQL SELECT statement that answers it \
+(use only the exact table/column names given above; never write INSERT, UPDATE, DELETE, DROP, \
+or ALTER; a single statement only), and respond with ONLY this JSON shape (clarification_question \
+must be null):
+{{"is_ambiguous": false, "clarification_question": null, "sql": "SELECT ...", "reasoning": "one short sentence"}}
+
+Respond with ONLY the raw JSON object, no markdown fences, no explanation outside the JSON."""

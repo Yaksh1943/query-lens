@@ -1,7 +1,15 @@
 """
 POST /api/query — the Text-to-SQL pipeline: resolve database ->
-check cache -> check ambiguity -> select tables -> generate SQL ->
-validate -> execute -> generate answer -> save history.
+check cache -> select tables -> check ambiguity + generate SQL (one
+combined call) -> validate -> execute -> generate answer -> save
+history.
+
+The ambiguity check and SQL generation used to be two separate LLM
+calls, each sending the full schema — see app.core.combined_check for
+the single-call version that halves that duplicated cost. The eval
+harness (eval/run_eval.py) still measures the old two-call flow in
+isolation to score ambiguity-detection accuracy on its own; it has
+not been updated to reflect this combined flow yet — a known gap.
 
 See app.core.query_cache, app.core.schema_selection, and
 app.db.connection_manager for the caching, schema-scaling, and
@@ -13,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.ambiguity import detect_ambiguity
+from app.core.combined_check import check_ambiguity_and_generate_sql
 from app.core.config import get_settings
 from app.core.query_cache import get_cached, save_to_cache
 from app.core.schema_selection import select_relevant_tables
@@ -61,7 +69,6 @@ def _sum_tokens(responses: list[LLMResponse]) -> tuple[int, int]:
 
 
 def _short(text: str, limit: int = 80) -> str:
-    """Truncates a question for logging, so long inputs don't bloat log lines."""
     return text if len(text) <= limit else text[:limit] + "..."
 
 
@@ -210,15 +217,19 @@ def _finish_with_sql(
     )
 
 
-def _run_pipeline_no_ambiguity_check(
+def _run_followup_pipeline(
     question: str,
     provider: GeminiProvider,
     db: Session,
-    llm_responses: list[LLMResponse],
     connection_id: int | None,
     engine,
 ) -> QueryResponse:
-    """Table selection -> SQL generation, then the shared validate/execute/answer tail. Used by follow-ups."""
+    """
+    Follow-ups skip the ambiguity check (the user just answered one) —
+    table selection -> SQL generation only, then the shared tail.
+    """
+    llm_responses: list[LLMResponse] = []
+
     selection = select_relevant_tables(question, provider, engine)
     if selection.raw_response is not None:
         llm_responses.append(selection.raw_response)
@@ -257,9 +268,7 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
 
         merged_question = f"{original.question} (Clarification: {request.clarification_answer})"
         logger.info("Follow-up received | trace_id=%d", request.trace_id)
-        return _run_pipeline_no_ambiguity_check(
-            merged_question, provider, db, llm_responses=[], connection_id=connection_id, engine=engine
-        )
+        return _run_followup_pipeline(merged_question, provider, db, connection_id=connection_id, engine=engine)
 
     if not request.question:
         raise HTTPException(status_code=400, detail="question is required.")
@@ -302,10 +311,21 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
 
     logger.info("Cache miss")
 
-    ambiguity = detect_ambiguity(request.question, provider, engine)
-    llm_responses = [ambiguity.raw_response]
+    # Table selection (large schemas only), then one combined call for
+    # both ambiguity-checking and SQL generation.
+    llm_responses: list[LLMResponse] = []
 
-    if ambiguity.is_ambiguous:
+    selection = select_relevant_tables(request.question, provider, engine)
+    if selection.raw_response is not None:
+        llm_responses.append(selection.raw_response)
+        logger.info("Table selection engaged | selected=%s", selection.table_names)
+
+    combined = check_ambiguity_and_generate_sql(
+        request.question, provider, engine, table_names=selection.table_names
+    )
+    llm_responses.append(combined.raw_response)
+
+    if combined.is_ambiguous:
         logger.info("Ambiguity detected")
         input_tokens, output_tokens = _sum_tokens(llm_responses)
         history = _save_history(
@@ -314,13 +334,13 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
             generated_sql="",
             success=False,
             connection_id=connection_id,
-            clarification_question=ambiguity.clarification_question,
+            clarification_question=combined.clarification_question,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
         save_to_cache(
             request.question, connection_id, db,
-            is_ambiguous=True, clarification_question=ambiguity.clarification_question,
+            is_ambiguous=True, clarification_question=combined.clarification_question,
         )
         return QueryResponse(
             trace_id=history.id,
@@ -328,10 +348,33 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
             success=False,
             result={},
             answer=None,
-            clarification_question=ambiguity.clarification_question,
+            clarification_question=combined.clarification_question,
             errors=[],
         )
 
-    return _run_pipeline_no_ambiguity_check(
-        request.question, provider, db, llm_responses, connection_id=connection_id, engine=engine
+    if not combined.sql:
+        input_tokens, output_tokens = _sum_tokens(llm_responses)
+        logger.warning("Combined call returned no SQL and no ambiguity flag | question=%s", _short(request.question))
+        history = _save_history(
+            db,
+            question=request.question,
+            generated_sql="",
+            success=False,
+            connection_id=connection_id,
+            error=combined.reasoning or "Model did not return SQL.",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        return QueryResponse(
+            trace_id=history.id,
+            sql=None,
+            success=False,
+            result={},
+            answer=None,
+            errors=[combined.reasoning or "Model did not return SQL."],
+        )
+
+    return _finish_with_sql(
+        request.question, combined.sql, provider, db, llm_responses,
+        connection_id=connection_id, engine=engine, served_from_cache=False,
     )
