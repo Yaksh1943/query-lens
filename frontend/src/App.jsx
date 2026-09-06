@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { runQuery, checkHealth } from './api'
+import { useEffect } from 'react'
 import QueryForm from './components/QueryForm'
-import ClarificationCard from './components/ClarificationCard'
-import TraceView from './components/TraceView'
+import ChatThread from './components/ChatThread'
 import StatsView from './components/StatsView'
 import InsightsView from './components/InsightsView'
 import ConnectionManager from './components/ConnectionManager'
@@ -13,11 +13,11 @@ const NAV_ITEMS = [
   { id: 'stats', label: 'stats' },
 ]
 
+let nextTurnId = 1
+
 function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
-  const [result, setResult] = useState(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [turns, setTurns] = useState([])
   const [activeTab, setActiveTab] = useState('query')
   const [selectedConnectionId, setSelectedConnectionId] = useState(null)
 
@@ -27,33 +27,39 @@ function App() {
       .catch(() => setBackendStatus('unreachable'))
   }, [])
 
+  function updateTurn(id, patch) {
+    setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
+  }
+
   async function handleAsk(question) {
-    setIsLoading(true)
-    setError(null)
+    const id = nextTurnId++
+    setTurns((prev) => [
+      ...prev,
+      { id, question, clarificationAnswer: null, result: null, isLoading: true, error: null },
+    ])
+
     try {
       const data = await runQuery({ question, connectionId: selectedConnectionId })
-      setResult(data)
+      updateTurn(id, { result: data, isLoading: false })
     } catch (err) {
-      setError(err.message)
-      setResult(null)
-    } finally {
-      setIsLoading(false)
+      updateTurn(id, { error: err.message, isLoading: false })
     }
   }
 
-  async function handleClarify(answer) {
-    if (!result?.trace_id) return
-    setIsLoading(true)
-    setError(null)
+  async function handleClarify(turnId, answer) {
+    const turn = turns.find((t) => t.id === turnId)
+    if (!turn?.result?.trace_id) return
+
+    updateTurn(turnId, { isLoading: true })
     try {
-      const data = await runQuery({ traceId: result.trace_id, clarificationAnswer: answer })
-      setResult(data)
+      const data = await runQuery({ traceId: turn.result.trace_id, clarificationAnswer: answer })
+      updateTurn(turnId, { result: data, clarificationAnswer: answer, isLoading: false })
     } catch (err) {
-      setError(err.message)
-    } finally {
-      setIsLoading(false)
+      updateTurn(turnId, { error: err.message, isLoading: false })
     }
   }
+
+  const isAnyLoading = turns.some((t) => t.isLoading)
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -107,27 +113,20 @@ function App() {
         </div>
       </nav>
 
-      <main style={{ flex: 1, padding: '2rem 2.5rem', maxWidth: '760px' }}>
+      <main style={{ flex: 1, padding: '2rem 2.5rem', maxWidth: '760px', display: 'flex', flexDirection: 'column' }}>
         {activeTab === 'query' && (
           <>
             <ConnectionManager selectedConnectionId={selectedConnectionId} onSelect={setSelectedConnectionId} />
-            <QueryForm onSubmit={handleAsk} isLoading={isLoading} />
 
-            {error && (
-              <p style={{ color: 'var(--error)', marginTop: '1rem', fontSize: '0.9rem' }}>
-                {error}
-              </p>
+            {turns.length > 0 && (
+              <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
+                <ChatThread turns={turns} onClarify={handleClarify} />
+              </div>
             )}
 
-            {result?.clarification_question && (
-              <ClarificationCard
-                question={result.clarification_question}
-                onSubmit={handleClarify}
-                isLoading={isLoading}
-              />
-            )}
-
-            <TraceView result={result} />
+            <div style={{ marginTop: turns.length === 0 ? '1.5rem' : 0 }}>
+              <QueryForm onSubmit={handleAsk} isLoading={isAnyLoading} />
+            </div>
           </>
         )}
 

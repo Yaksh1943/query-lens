@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -19,6 +20,19 @@ function StatCard({ label, value, sublabel }) {
       {sublabel && (
         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>{sublabel}</div>
       )}
+    </div>
+  )
+}
+
+function ChartPanel({ title, children }) {
+  return (
+    <div style={{ marginBottom: '1.75rem' }}>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        {title}
+      </div>
+      <div style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '4px', padding: '1rem' }}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -61,6 +75,29 @@ function InsightsView() {
 
   const { summary, cases, generated_at } = insights.data
   const ambiguousCases = cases.filter((c) => c.case_type === 'ambiguous')
+  const unambiguousCases = cases.filter((c) => c.case_type === 'unambiguous')
+
+  const tokenChartData = cases.map((c) => ({
+    name: c.case_id,
+    on: c.on_input_tokens + c.on_output_tokens,
+    off: c.off_input_tokens + c.off_output_tokens,
+  }))
+
+  const accuracyChartData = unambiguousCases.map((c) => ({
+    name: c.case_id,
+    on: c.on_passed ? 100 : 0,
+    off: c.off_passed ? 100 : 0,
+  }))
+
+  const tooltipStyle = {
+    background: 'var(--panel)',
+    border: '1px solid var(--border)',
+    borderRadius: '4px',
+    fontFamily: 'var(--font-sans)',
+    fontSize: '0.85rem',
+  }
+
+  const axisTick = { fill: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)' }
 
   return (
     <div>
@@ -86,55 +123,35 @@ function InsightsView() {
         />
       </div>
 
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-        per-question results
-      </div>
-      <div style={{ overflowX: 'auto', marginBottom: '1.75rem' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.85rem' }}>
-          <thead>
-            <tr>
-              {['question', 'type', 'on', 'off', 'on tokens', 'off tokens'].map((h) => (
-                <th
-                  key={h}
-                  style={{
-                    textAlign: 'left',
-                    padding: '0.4rem 0.6rem',
-                    borderBottom: '1px solid var(--border)',
-                    color: 'var(--text-muted)',
-                    fontFamily: 'var(--font-mono)',
-                    fontWeight: 500,
-                    fontSize: '0.75rem',
-                  }}
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {cases.map((c) => (
-              <tr key={c.case_id}>
-                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)' }}>{c.question}</td>
-                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-                  {c.case_type}
-                </td>
-                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)' }}>
-                  {c.on_passed === null ? '—' : c.on_passed ? 'yes' : 'no'}
-                </td>
-                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)' }}>
-                  {c.off_passed === null ? '—' : c.off_passed ? 'yes' : 'no'}
-                </td>
-                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-mono)' }}>
-                  {(c.on_input_tokens + c.on_output_tokens).toLocaleString()}
-                </td>
-                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-mono)' }}>
-                  {(c.off_input_tokens + c.off_output_tokens).toLocaleString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {accuracyChartData.length > 0 && (
+        <ChartPanel title="accuracy per question — on vs off (unambiguous cases)">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={accuracyChartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="name" tick={axisTick} axisLine={{ stroke: 'var(--border)' }} />
+              <YAxis tick={axisTick} axisLine={{ stroke: 'var(--border)' }} unit="%" domain={[0, 100]} />
+              <Tooltip contentStyle={tooltipStyle} />
+              <Legend wrapperStyle={{ fontSize: '0.8rem', fontFamily: 'var(--font-sans)' }} />
+              <Bar dataKey="on" name="check on" fill="var(--accent)" radius={[2, 2, 0, 0]} />
+              <Bar dataKey="off" name="check off" fill="var(--text-muted)" radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartPanel>
+      )}
+
+      <ChartPanel title="token cost per question — on vs off">
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={tokenChartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="name" tick={axisTick} axisLine={{ stroke: 'var(--border)' }} />
+            <YAxis tick={axisTick} axisLine={{ stroke: 'var(--border)' }} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend wrapperStyle={{ fontSize: '0.8rem', fontFamily: 'var(--font-sans)' }} />
+            <Bar dataKey="on" name="check on" fill="var(--accent)" radius={[2, 2, 0, 0]} />
+            <Bar dataKey="off" name="check off" fill="var(--text-muted)" radius={[2, 2, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartPanel>
 
       {ambiguousCases.length > 0 && (
         <>
