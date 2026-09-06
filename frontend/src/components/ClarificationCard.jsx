@@ -13,47 +13,57 @@ function ClarificationCard({ question, onSubmit, isLoading }) {
   return (
     <div
       style={{
-        border: '1px solid #4f6df5',
-        borderRadius: '8px',
-        padding: '1rem 1.25rem',
-        background: '#1a1d27',
         marginTop: '1rem',
+        padding: '1rem 1.2rem',
+        background: 'var(--panel)',
+        borderLeft: '2px solid var(--accent)',
       }}
     >
-      <p style={{ margin: '0 0 0.75rem', color: '#a9b4ff' }}>
-        Needs clarification: <strong>{question}</strong>
-      </p>
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.75rem',
+          color: 'var(--text-muted)',
+          marginBottom: '0.5rem',
+        }}
+      >
+        needs clarification
+      </div>
+      <p style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>{question}</p>
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.5rem' }}>
         <input
           type="text"
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
-          placeholder="Your answer..."
+          placeholder="your answer"
           disabled={isLoading}
           style={{
             flex: 1,
-            padding: '0.6rem 0.9rem',
-            borderRadius: '6px',
-            border: '1px solid #333',
-            background: '#0f1117',
-            color: '#e6e6e6',
-            fontSize: '0.95rem',
+            padding: '0.55rem 0.8rem',
+            borderRadius: '4px',
+            border: '1px solid var(--border)',
+            background: 'var(--bg)',
+            color: 'var(--text)',
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.9rem',
           }}
         />
         <button
           type="submit"
           disabled={isLoading || !answer.trim()}
           style={{
-            padding: '0.6rem 1.25rem',
-            borderRadius: '6px',
+            padding: '0.55rem 1.1rem',
+            borderRadius: '4px',
             border: 'none',
-            background: isLoading ? '#333' : '#4f6df5',
-            color: '#fff',
-            fontSize: '0.95rem',
+            background: isLoading ? 'var(--border)' : 'var(--accent)',
+            color: isLoading ? 'var(--text-muted)' : 'var(--accent-text)',
+            fontFamily: 'var(--font-sans)',
+            fontWeight: 600,
+            fontSize: '0.9rem',
             cursor: isLoading ? 'default' : 'pointer',
           }}
         >
-          Submit
+          submit
         </button>
       </form>
     </div>

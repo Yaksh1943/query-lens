@@ -1,74 +1,101 @@
+function TraceRow({ number, label, children }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: '1rem',
+        padding: '0.85rem 0',
+        borderBottom: '1px solid var(--border)',
+      }}
+    >
+      <div
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.8rem',
+          color: 'var(--text-muted)',
+          width: '1.2rem',
+          flexShrink: 0,
+        }}
+      >
+        {number}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.75rem',
+            color: 'var(--text-muted)',
+            marginBottom: '0.35rem',
+          }}
+        >
+          {label}
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function TraceView({ result }) {
   if (!result) return null
 
   const { sql, success, result: queryResult, answer, errors, clarification_question } = result
 
-  // Clarification is handled by a separate component (ClarificationCard) - don't render here.
   if (clarification_question) return null
 
   if (!success) {
     return (
-      <div
-        style={{
-          border: '1px solid #e5484d',
-          borderRadius: '8px',
-          padding: '1rem 1.25rem',
-          background: '#1a1d27',
-          marginTop: '1rem',
-        }}
-      >
-        <p style={{ margin: 0, color: '#ff9090', fontWeight: 'bold' }}>Query failed</p>
-        <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem', color: '#ffb3b3' }}>
-          {(errors || []).map((err, i) => (
-            <li key={i}>{err}</li>
-          ))}
-        </ul>
-        {sql && (
-          <pre
-            style={{
-              marginTop: '0.75rem',
-              padding: '0.75rem',
-              background: '#0f1117',
-              borderRadius: '6px',
-              overflowX: 'auto',
-              fontSize: '0.85rem',
-            }}
-          >
-            {sql}
-          </pre>
-        )}
+      <div style={{ marginTop: '1.5rem' }}>
+        <TraceRow number="!" label="failed">
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--error)', fontSize: '0.9rem' }}>
+            {(errors || []).map((err, i) => (
+              <li key={i}>{err}</li>
+            ))}
+          </ul>
+          {sql && (
+            <pre
+              style={{
+                marginTop: '0.6rem',
+                padding: '0.6rem 0.75rem',
+                background: 'var(--panel)',
+                border: '1px solid var(--border)',
+                borderRadius: '4px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.8rem',
+                overflowX: 'auto',
+              }}
+            >
+              {sql}
+            </pre>
+          )}
+        </TraceRow>
       </div>
     )
   }
 
   return (
-    <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <section>
-        <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#8a92a6', textTransform: 'uppercase' }}>
-          Generated SQL
-        </h3>
+    <div style={{ marginTop: '1.5rem' }}>
+      <TraceRow number="1" label="sql">
         <pre
           style={{
             margin: 0,
-            padding: '0.75rem',
-            background: '#1a1d27',
-            border: '1px solid #333',
-            borderRadius: '6px',
+            padding: '0.6rem 0.75rem',
+            background: 'var(--panel)',
+            border: '1px solid var(--border)',
+            borderRadius: '4px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.8rem',
             overflowX: 'auto',
-            fontSize: '0.85rem',
           }}
         >
           {sql}
         </pre>
-      </section>
+      </TraceRow>
 
       {queryResult && queryResult.rows && queryResult.rows.length > 0 && (
-        <section>
-          <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#8a92a6', textTransform: 'uppercase' }}>
-            Result ({queryResult.row_count} row{queryResult.row_count === 1 ? '' : 's'})
-          </h3>
-          <div style={{ overflowX: 'auto', border: '1px solid #333', borderRadius: '6px' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.9rem' }}>
+        <TraceRow number="2" label={`result — ${queryResult.row_count} row${queryResult.row_count === 1 ? '' : 's'}`}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.85rem' }}>
               <thead>
                 <tr>
                   {queryResult.columns.map((col) => (
@@ -76,10 +103,12 @@ function TraceView({ result }) {
                       key={col}
                       style={{
                         textAlign: 'left',
-                        padding: '0.5rem 0.75rem',
-                        background: '#1a1d27',
-                        borderBottom: '1px solid #333',
-                        color: '#a9b4ff',
+                        padding: '0.4rem 0.6rem',
+                        borderBottom: '1px solid var(--border)',
+                        color: 'var(--text-muted)',
+                        fontWeight: 500,
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.78rem',
                       }}
                     >
                       {col}
@@ -94,8 +123,8 @@ function TraceView({ result }) {
                       <td
                         key={col}
                         style={{
-                          padding: '0.5rem 0.75rem',
-                          borderBottom: '1px solid #22252f',
+                          padding: '0.4rem 0.6rem',
+                          borderBottom: '1px solid var(--border)',
                         }}
                       >
                         {String(row[col])}
@@ -106,23 +135,30 @@ function TraceView({ result }) {
               </tbody>
             </table>
           </div>
-        </section>
+        </TraceRow>
       )}
 
       {answer && (
-        <section
+        <div
           style={{
-            padding: '1rem 1.25rem',
-            background: '#161a2e',
-            border: '1px solid #4f6df5',
-            borderRadius: '8px',
+            marginTop: '1rem',
+            padding: '1rem 1.2rem',
+            background: 'var(--panel)',
+            borderLeft: '2px solid var(--accent)',
           }}
         >
-          <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#a9b4ff', textTransform: 'uppercase' }}>
-            Answer
-          </h3>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem',
+              color: 'var(--text-muted)',
+              marginBottom: '0.4rem',
+            }}
+          >
+            answer
+          </div>
           <p style={{ margin: 0, fontSize: '1rem', whiteSpace: 'pre-wrap' }}>{answer}</p>
-        </section>
+        </div>
       )}
     </div>
   )

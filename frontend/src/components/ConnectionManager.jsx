@@ -40,22 +40,25 @@ function ConnectionManager({ selectedConnectionId, onSelect }) {
   }
 
   return (
-    <div style={{ marginBottom: '1rem' }}>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-        <label style={{ fontSize: '0.85rem', color: '#8a92a6' }}>Database:</label>
+    <div>
+      <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+        <label style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          database
+        </label>
         <select
           value={selectedConnectionId ?? ''}
           onChange={(e) => onSelect(e.target.value ? Number(e.target.value) : null)}
           style={{
-            padding: '0.4rem 0.6rem',
-            borderRadius: '6px',
-            border: '1px solid #333',
-            background: '#1a1d27',
-            color: '#e6e6e6',
-            fontSize: '0.9rem',
+            padding: '0.35rem 0.5rem',
+            borderRadius: '4px',
+            border: '1px solid var(--border)',
+            background: 'var(--panel)',
+            color: 'var(--text)',
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.85rem',
           }}
         >
-          <option value="">Default (Chinook)</option>
+          <option value="">default (chinook)</option>
           {connections.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -65,16 +68,17 @@ function ConnectionManager({ selectedConnectionId, onSelect }) {
         <button
           onClick={() => setIsAdding(!isAdding)}
           style={{
-            padding: '0.4rem 0.75rem',
-            borderRadius: '6px',
-            border: '1px solid #4f6df5',
-            background: 'transparent',
-            color: '#a9b4ff',
-            fontSize: '0.85rem',
+            padding: '0.35rem 0.65rem',
+            borderRadius: '4px',
+            border: '1px solid var(--accent)',
+            background: 'none',
+            color: 'var(--accent)',
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.8rem',
             cursor: 'pointer',
           }}
         >
-          {isAdding ? 'Cancel' : '+ Add database'}
+          {isAdding ? 'cancel' : '+ add database'}
         </button>
       </div>
 
@@ -87,24 +91,25 @@ function ConnectionManager({ selectedConnectionId, onSelect }) {
             gap: '0.5rem',
             marginTop: '0.75rem',
             padding: '1rem',
-            background: '#1a1d27',
-            border: '1px solid #333',
-            borderRadius: '8px',
+            background: 'var(--panel)',
+            border: '1px solid var(--border)',
+            borderRadius: '4px',
           }}
         >
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Name (e.g. My Shop DB)"
+            placeholder="name (e.g. my shop db)"
             disabled={isSubmitting}
             style={{
-              padding: '0.5rem 0.75rem',
-              borderRadius: '6px',
-              border: '1px solid #333',
-              background: '#0f1117',
-              color: '#e6e6e6',
-              fontSize: '0.9rem',
+              padding: '0.5rem 0.7rem',
+              borderRadius: '4px',
+              border: '1px solid var(--border)',
+              background: 'var(--bg)',
+              color: 'var(--text)',
+              fontFamily: 'var(--font-sans)',
+              fontSize: '0.85rem',
             }}
           />
           <input
@@ -114,32 +119,35 @@ function ConnectionManager({ selectedConnectionId, onSelect }) {
             placeholder="postgresql+psycopg://user:password@host:5432/dbname"
             disabled={isSubmitting}
             style={{
-              padding: '0.5rem 0.75rem',
-              borderRadius: '6px',
-              border: '1px solid #333',
-              background: '#0f1117',
-              color: '#e6e6e6',
-              fontSize: '0.9rem',
+              padding: '0.5rem 0.7rem',
+              borderRadius: '4px',
+              border: '1px solid var(--border)',
+              background: 'var(--bg)',
+              color: 'var(--text)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.8rem',
             }}
           />
-          <p style={{ margin: 0, fontSize: '0.75rem', color: '#8a92a6' }}>
-            The connection is tested before saving, and the connection string is encrypted at rest.
+          <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+            tested before saving · encrypted at rest
           </p>
-          {error && <p style={{ margin: 0, color: '#ff9090', fontSize: '0.85rem' }}>{error}</p>}
+          {error && <p style={{ margin: 0, color: 'var(--error)', fontSize: '0.82rem' }}>{error}</p>}
           <button
             type="submit"
             disabled={isSubmitting || !name.trim() || !connectionUrl.trim()}
             style={{
               padding: '0.5rem 1rem',
-              borderRadius: '6px',
+              borderRadius: '4px',
               border: 'none',
-              background: isSubmitting ? '#333' : '#4f6df5',
-              color: '#fff',
-              fontSize: '0.9rem',
+              background: isSubmitting ? 'var(--border)' : 'var(--accent)',
+              color: isSubmitting ? 'var(--text-muted)' : 'var(--accent-text)',
+              fontFamily: 'var(--font-sans)',
+              fontWeight: 600,
+              fontSize: '0.85rem',
               cursor: isSubmitting ? 'default' : 'pointer',
             }}
           >
-            {isSubmitting ? 'Testing connection...' : 'Add database'}
+            {isSubmitting ? 'testing connection' : 'add database'}
           </button>
         </form>
       )}

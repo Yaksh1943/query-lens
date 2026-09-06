@@ -11,37 +11,40 @@ function QueryForm({ onSubmit, isLoading }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.5rem' }}>
+    <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem' }}>
       <input
         type="text"
         value={question}
         onChange={(e) => setQuestion(e.target.value)}
-        placeholder="Ask a question about the data..."
+        placeholder="ask a question about the data"
         disabled={isLoading}
         style={{
           flex: 1,
-          padding: '0.75rem 1rem',
-          borderRadius: '6px',
-          border: '1px solid #333',
-          background: '#1a1d27',
-          color: '#e6e6e6',
-          fontSize: '1rem',
+          padding: '0.7rem 0.9rem',
+          borderRadius: '4px',
+          border: '1px solid var(--border)',
+          background: 'var(--panel)',
+          color: 'var(--text)',
+          fontFamily: 'var(--font-sans)',
+          fontSize: '0.95rem',
         }}
       />
       <button
         type="submit"
         disabled={isLoading || !question.trim()}
         style={{
-          padding: '0.75rem 1.5rem',
-          borderRadius: '6px',
+          padding: '0.7rem 1.4rem',
+          borderRadius: '4px',
           border: 'none',
-          background: isLoading ? '#333' : '#4f6df5',
-          color: '#fff',
-          fontSize: '1rem',
+          background: isLoading ? 'var(--border)' : 'var(--accent)',
+          color: isLoading ? 'var(--text-muted)' : 'var(--accent-text)',
+          fontFamily: 'var(--font-sans)',
+          fontWeight: 600,
+          fontSize: '0.95rem',
           cursor: isLoading ? 'default' : 'pointer',
         }}
       >
-        {isLoading ? 'Thinking...' : 'Ask'}
+        {isLoading ? 'thinking' : 'ask'}
       </button>
     </form>
   )

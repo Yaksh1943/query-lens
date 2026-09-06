@@ -6,17 +6,19 @@ function StatCard({ label, value, sublabel }) {
   return (
     <div
       style={{
-        padding: '1rem',
-        background: '#1a1d27',
-        border: '1px solid #333',
-        borderRadius: '8px',
+        padding: '0.9rem 1rem',
+        background: 'var(--panel)',
+        border: '1px solid var(--border)',
+        borderRadius: '4px',
       }}
     >
-      <p style={{ margin: '0 0 0.4rem', fontSize: '0.8rem', color: '#8a92a6', textTransform: 'uppercase' }}>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
         {label}
-      </p>
-      <p style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>{value}</p>
-      {sublabel && <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: '#8a92a6' }}>{sublabel}</p>}
+      </div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.4rem', fontWeight: 700 }}>{value}</div>
+      {sublabel && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>{sublabel}</div>
+      )}
     </div>
   )
 }
@@ -29,29 +31,30 @@ function InsightsView() {
     fetch(`${API_BASE_URL}/api/insights`)
       .then((res) => res.json())
       .then(setInsights)
-      .catch(() => setError('Could not load insights'))
+      .catch(() => setError('could not load insights'))
   }, [])
 
   if (error) {
-    return <p style={{ color: '#ff9090' }}>{error}</p>
+    return <p style={{ color: 'var(--error)', fontSize: '0.9rem' }}>{error}</p>
   }
 
   if (!insights) {
-    return <p style={{ color: '#8a92a6' }}>Loading insights...</p>
+    return <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>loading</p>
   }
 
   if (!insights.available) {
     return (
       <div
         style={{
-          padding: '1rem 1.25rem',
-          background: '#1a1d27',
-          border: '1px solid #333',
-          borderRadius: '8px',
-          color: '#8a92a6',
+          padding: '1rem 1.2rem',
+          background: 'var(--panel)',
+          border: '1px solid var(--border)',
+          borderRadius: '4px',
+          color: 'var(--text-muted)',
+          fontSize: '0.9rem',
         }}
       >
-        <p style={{ margin: 0 }}>{insights.message}</p>
+        {insights.message}
       </div>
     )
   }
@@ -61,46 +64,46 @@ function InsightsView() {
 
   return (
     <div>
-      <p style={{ color: '#8a92a6', fontSize: '0.85rem', marginBottom: '1rem' }}>
-        Evaluation of the ambiguity-detection safety net, comparing behavior with it
-        on (real API behavior) vs. off (blind generation). Last run:{' '}
-        {new Date(generated_at).toLocaleString()}.
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+        ambiguity-check comparison, on vs off. last run: {new Date(generated_at).toLocaleString()}
       </p>
 
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-          gap: '1rem',
-          marginBottom: '1.5rem',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap: '0.75rem',
+          marginBottom: '1.75rem',
         }}
       >
-        <StatCard label="Accuracy (check ON)" value={`${(summary.execution_accuracy_on * 100).toFixed(0)}%`} />
-        <StatCard label="Accuracy (check OFF)" value={`${(summary.execution_accuracy_off * 100).toFixed(0)}%`} />
-        <StatCard label="Ambiguity catch rate" value={`${(summary.ambiguity_catch_rate * 100).toFixed(0)}%`} />
+        <StatCard label="accuracy — on" value={`${(summary.execution_accuracy_on * 100).toFixed(0)}%`} />
+        <StatCard label="accuracy — off" value={`${(summary.execution_accuracy_off * 100).toFixed(0)}%`} />
+        <StatCard label="ambiguity caught" value={`${(summary.ambiguity_catch_rate * 100).toFixed(0)}%`} />
         <StatCard
-          label="Token overhead"
+          label="token overhead"
           value={`${summary.token_overhead_pct >= 0 ? '+' : ''}${summary.token_overhead_pct.toFixed(0)}%`}
-          sublabel="cost of running the safety check"
+          sublabel="cost of the safety check"
         />
       </div>
 
-      <h3 style={{ fontSize: '0.85rem', color: '#8a92a6', textTransform: 'uppercase', margin: '0 0 0.5rem' }}>
-        Per-question results
-      </h3>
-      <div style={{ overflowX: 'auto', border: '1px solid #333', borderRadius: '6px', marginBottom: '1.5rem' }}>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+        per-question results
+      </div>
+      <div style={{ overflowX: 'auto', marginBottom: '1.75rem' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.85rem' }}>
           <thead>
             <tr>
-              {['Question', 'Type', 'ON pass', 'OFF pass', 'ON tokens', 'OFF tokens'].map((h) => (
+              {['question', 'type', 'on', 'off', 'on tokens', 'off tokens'].map((h) => (
                 <th
                   key={h}
                   style={{
                     textAlign: 'left',
-                    padding: '0.5rem 0.75rem',
-                    background: '#1a1d27',
-                    borderBottom: '1px solid #333',
-                    color: '#a9b4ff',
+                    padding: '0.4rem 0.6rem',
+                    borderBottom: '1px solid var(--border)',
+                    color: 'var(--text-muted)',
+                    fontFamily: 'var(--font-mono)',
+                    fontWeight: 500,
+                    fontSize: '0.75rem',
                   }}
                 >
                   {h}
@@ -111,18 +114,20 @@ function InsightsView() {
           <tbody>
             {cases.map((c) => (
               <tr key={c.case_id}>
-                <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #22252f' }}>{c.question}</td>
-                <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #22252f' }}>{c.case_type}</td>
-                <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #22252f' }}>
-                  {c.on_passed === null ? '—' : c.on_passed ? '✅' : '❌'}
+                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)' }}>{c.question}</td>
+                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                  {c.case_type}
                 </td>
-                <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #22252f' }}>
-                  {c.off_passed === null ? '—' : c.off_passed ? '✅' : '❌'}
+                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)' }}>
+                  {c.on_passed === null ? '—' : c.on_passed ? 'yes' : 'no'}
                 </td>
-                <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #22252f' }}>
+                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)' }}>
+                  {c.off_passed === null ? '—' : c.off_passed ? 'yes' : 'no'}
+                </td>
+                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-mono)' }}>
                   {(c.on_input_tokens + c.on_output_tokens).toLocaleString()}
                 </td>
-                <td style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #22252f' }}>
+                <td style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-mono)' }}>
                   {(c.off_input_tokens + c.off_output_tokens).toLocaleString()}
                 </td>
               </tr>
@@ -133,23 +138,22 @@ function InsightsView() {
 
       {ambiguousCases.length > 0 && (
         <>
-          <h3 style={{ fontSize: '0.85rem', color: '#8a92a6', textTransform: 'uppercase', margin: '0 0 0.5rem' }}>
-            What the model generates if the safety check is skipped
-          </h3>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+            generated blind, if the check is skipped
+          </div>
           {ambiguousCases.map((c) => (
             <div key={c.case_id} style={{ marginBottom: '1rem' }}>
-              <p style={{ margin: '0 0 0.4rem', fontSize: '0.9rem' }}>
-                <strong>{c.question}</strong>
-              </p>
+              <p style={{ margin: '0 0 0.4rem', fontSize: '0.9rem' }}>{c.question}</p>
               <pre
                 style={{
                   margin: 0,
-                  padding: '0.75rem',
-                  background: '#1a1d27',
-                  border: '1px solid #333',
-                  borderRadius: '6px',
-                  overflowX: 'auto',
+                  padding: '0.6rem 0.75rem',
+                  background: 'var(--panel)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '4px',
+                  fontFamily: 'var(--font-mono)',
                   fontSize: '0.8rem',
+                  overflowX: 'auto',
                 }}
               >
                 {c.off_sql || '(generation failed)'}
