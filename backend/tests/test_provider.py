@@ -131,7 +131,7 @@ def test_get_llm_provider_factory():
 
     settings.llm_provider = "auto"
     settings.gemini_api_key = "gemini-key"
-    settings.gemini_model = "gemini-2.5-flash"
+    settings.gemini_model = "gemini-3.5-flash-lite"
     settings.gemini_min_seconds_between_calls = 0.0
     settings.groq_api_key = "gsk-test"
     provider = get_llm_provider(settings)

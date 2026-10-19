@@ -45,7 +45,7 @@ class GeminiProvider(LLMProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.5-flash-lite",
         min_seconds_between_calls: float = 0.0,
     ) -> None:
         self.api_key = api_key
@@ -284,7 +284,7 @@ def get_llm_provider(settings: Any | None = None) -> LLMProvider:
             pool.append(
                 GeminiProvider(
                     api_key=settings.gemini_api_key,
-                    model=getattr(settings, "gemini_model", "gemini-2.5-flash"),
+                    model=getattr(settings, "gemini_model", "gemini-3.5-flash-lite"),
                     min_seconds_between_calls=getattr(settings, "gemini_min_seconds_between_calls", 0.0),
                 )
             )
@@ -296,6 +296,6 @@ def get_llm_provider(settings: Any | None = None) -> LLMProvider:
     # Default to GeminiProvider
     return GeminiProvider(
         api_key=settings.gemini_api_key,
-        model=getattr(settings, "gemini_model", "gemini-2.5-flash"),
+        model=getattr(settings, "gemini_model", "gemini-3.5-flash-lite"),
         min_seconds_between_calls=getattr(settings, "gemini_min_seconds_between_calls", 0.0),
     )

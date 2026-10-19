@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # --- LLM provider ---
     llm_provider: str = Field(default="gemini")
     gemini_api_key: str = Field(default="")
-    gemini_model: str = Field(default="gemini-2.5-flash")
+    gemini_model: str = Field(default="gemini-3.5-flash-lite")
     gemini_min_seconds_between_calls: float = Field(default=0.0)
 
     # --- Free fallback providers ---
