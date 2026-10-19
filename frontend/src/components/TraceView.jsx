@@ -76,6 +76,23 @@ function TraceView({ result }) {
   return (
     <div style={{ marginTop: '1.5rem' }}>
       <TraceRow number="1" label="sql">
+        {result.self_corrected && (
+          <div
+            style={{
+              display: 'inline-block',
+              marginBottom: '0.45rem',
+              padding: '0.2rem 0.5rem',
+              borderRadius: '4px',
+              fontSize: '0.72rem',
+              fontFamily: 'var(--font-mono)',
+              background: 'rgba(56, 189, 248, 0.15)',
+              color: '#38bdf8',
+              border: '1px solid rgba(56, 189, 248, 0.3)',
+            }}
+          >
+            ⚡ Auto-corrected via self-healing loop
+          </div>
+        )}
         <pre
           style={{
             margin: 0,

@@ -42,6 +42,7 @@ class QueryHistory(Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     connection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     served_from_cache: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    self_corrected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

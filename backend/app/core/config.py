@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     # --- LLM provider ---
     llm_provider: str = Field(default="gemini")
     gemini_api_key: str = Field(default="")
+    gemini_model: str = Field(default="gemini-2.5-flash")
+    gemini_min_seconds_between_calls: float = Field(default=0.0)
+
+    # --- Free fallback providers ---
+    groq_api_key: str = Field(default="")
+    groq_model: str = Field(default="llama-3.3-70b-versatile")
+    ollama_base_url: str = Field(default="http://localhost:11434/v1")
+    ollama_model: str = Field(default="qwen2.5-coder:7b")
+
+    # --- Agentic Self-Healing ---
+    enable_self_healing: bool = Field(default=True)
+    max_self_healing_retries: int = Field(default=1)
 
     # --- CORS ---
     cors_allowed_origins: list[str] = Field(

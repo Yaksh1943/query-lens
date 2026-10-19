@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.engine import Engine
 
-from app.core.prompts import build_answer_prompt, build_sql_prompt
+from app.core.prompts import build_answer_prompt, build_sql_prompt, build_sql_repair_prompt
 from app.db.schema import format_schema_for_prompt
 from app.llm.provider import LLMProvider, LLMResponse
 
@@ -78,3 +78,24 @@ def generate_answer(
     prompt = build_answer_prompt(question, sql, rows)
     response = provider.complete(prompt)
     return GeneratedAnswer(text=response.text, raw_response=response)
+
+
+def repair_sql(
+    question: str,
+    failed_sql: str,
+    error_message: str,
+    provider: LLMProvider,
+    engine: Engine,
+    table_names: list[str] | None = None,
+) -> GeneratedSQL:
+    """
+    Submits a failed SQL query along with its validation or execution error
+    to the LLM for self-correction.
+    """
+    schema_text = format_schema_for_prompt(engine, table_names=table_names)
+    prompt = build_sql_repair_prompt(question, failed_sql, error_message, schema_text)
+
+    response = provider.complete(prompt)
+    sql = _strip_code_fences(response.text)
+
+    return GeneratedSQL(sql=sql, raw_response=response)

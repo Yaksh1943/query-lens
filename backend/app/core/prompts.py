@@ -148,3 +148,32 @@ must be null):
 {{"is_ambiguous": false, "clarification_question": null, "sql": "SELECT ...", "reasoning": "one short sentence"}}
 
 Respond with ONLY the raw JSON object, no markdown fences, no explanation outside the JSON."""
+
+
+def build_sql_repair_prompt(question: str, failed_sql: str, error_message: str, schema_text: str) -> str:
+    """
+    Builds the prompt that asks the LLM to repair an invalid or failed SQL query
+    given the schema, the original question, the generated query, and the exact error.
+    """
+    return f"""You are a PostgreSQL expert. An attempt to generate SQL for a question failed validation or database execution.
+Fix the SQL query so that it executes successfully against the PostgreSQL schema and answers the user's question accurately.
+
+Database schema:
+{schema_text}
+
+Original question: {question}
+
+Failed SQL query:
+{failed_sql}
+
+Error encountered:
+{error_message}
+
+Rules:
+- Output ONLY the raw corrected SQL query. No markdown code fences, no explanation, no comments.
+- Use only the exact table and column names given in the schema above.
+- Write a single SELECT statement only. Never write INSERT, UPDATE, DELETE, DROP, or ALTER.
+- Resolve the specific error reported (e.g. fix unknown columns or tables, adjust GROUP BY/aggregations, or fix join keys).
+- If the question implies LIMIT, apply it naturally, otherwise a system LIMIT will be applied automatically.
+
+Corrected SQL query:"""

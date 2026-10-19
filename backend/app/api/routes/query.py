@@ -25,14 +25,14 @@ from app.core.combined_check import check_ambiguity_and_generate_sql
 from app.core.config import get_settings
 from app.core.query_cache import get_cached, save_to_cache
 from app.core.schema_selection import select_relevant_tables
-from app.core.sql_generation import generate_answer, generate_sql
+from app.core.sql_generation import generate_answer, generate_sql, repair_sql
 from app.core.sql_validation import validate_sql
 from app.db.analytics import execute_query
 from app.db.connection_manager import get_engine_for_connection
 from app.db.models import QueryHistory
 from app.db.schema import get_schema_snapshot
 from app.db.session import get_db
-from app.llm.provider import GeminiProvider, LLMResponse
+from app.llm.provider import LLMProvider, LLMResponse, get_llm_provider
 from app.observability.logger import get_logger
 
 router = APIRouter()
@@ -55,6 +55,7 @@ class QueryResponse(BaseModel):
     answer: str | None
     clarification_question: str | None = None
     errors: list[str] = []
+    self_corrected: bool = False
 
 
 def _sample_rows(rows: list[dict], limit: int = 3) -> list[dict]:
@@ -87,6 +88,7 @@ def _save_history(
     input_tokens: int = 0,
     output_tokens: int = 0,
     served_from_cache: bool = False,
+    self_corrected: bool = False,
 ) -> QueryHistory:
     history = QueryHistory(
         question=question,
@@ -101,6 +103,7 @@ def _save_history(
         output_tokens=output_tokens,
         connection_id=connection_id,
         served_from_cache=served_from_cache,
+        self_corrected=self_corrected,
     )
     db.add(history)
     db.commit()
@@ -111,16 +114,39 @@ def _save_history(
 def _finish_with_sql(
     question: str,
     sql: str,
-    provider: GeminiProvider,
+    provider: LLMProvider,
     db: Session,
     llm_responses: list[LLMResponse],
     connection_id: int | None,
     engine,
     served_from_cache: bool,
+    table_names: list[str] | None = None,
 ) -> QueryResponse:
     """Validate -> execute -> generate answer -> save history. Shared by cache-hit and cache-miss paths."""
     schema = get_schema_snapshot(engine)
     validation = validate_sql(sql, schema)
+    self_corrected = False
+
+    # Self-Correction Step 1: Repair validation failure (AST, missing column/table, etc.)
+    if not validation.is_valid and settings.enable_self_healing and not served_from_cache:
+        logger.info("Attempting SQL self-correction after validation failure: %s", "; ".join(validation.errors))
+        repair = repair_sql(
+            question=question,
+            failed_sql=sql,
+            error_message="; ".join(validation.errors),
+            provider=provider,
+            engine=engine,
+            table_names=table_names,
+        )
+        llm_responses.append(repair.raw_response)
+        repaired_val = validate_sql(repair.sql, schema)
+        if repaired_val.is_valid:
+            logger.info("Self-correction succeeded at validation stage! Repaired SQL: %s", repaired_val.sql)
+            sql = repaired_val.sql
+            validation = repaired_val
+            self_corrected = True
+        else:
+            validation = repaired_val
 
     if not validation.is_valid:
         input_tokens, output_tokens = _sum_tokens(llm_responses)
@@ -135,6 +161,7 @@ def _finish_with_sql(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             served_from_cache=served_from_cache,
+            self_corrected=self_corrected,
         )
         return QueryResponse(
             trace_id=history.id,
@@ -143,9 +170,31 @@ def _finish_with_sql(
             result={},
             answer=None,
             errors=validation.errors,
+            self_corrected=self_corrected,
         )
 
     query_result = execute_query(validation.sql, engine)
+
+    # Self-Correction Step 2: Repair runtime database execution failure (e.g. GROUP BY mismatch, division by zero)
+    if not query_result.success and settings.enable_self_healing and not served_from_cache and not self_corrected:
+        logger.info("Attempting SQL self-correction after database execution error: %s", query_result.error)
+        repair = repair_sql(
+            question=question,
+            failed_sql=validation.sql,
+            error_message=query_result.error or "Execution error",
+            provider=provider,
+            engine=engine,
+            table_names=table_names,
+        )
+        llm_responses.append(repair.raw_response)
+        repaired_val = validate_sql(repair.sql, schema)
+        if repaired_val.is_valid:
+            repaired_res = execute_query(repaired_val.sql, engine)
+            if repaired_res.success:
+                logger.info("Self-correction succeeded at database execution stage!")
+                validation = repaired_val
+                query_result = repaired_res
+                self_corrected = True
 
     if not query_result.success:
         input_tokens, output_tokens = _sum_tokens(llm_responses)
@@ -161,6 +210,7 @@ def _finish_with_sql(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             served_from_cache=served_from_cache,
+            self_corrected=self_corrected,
         )
         return QueryResponse(
             trace_id=history.id,
@@ -169,6 +219,7 @@ def _finish_with_sql(
             result={},
             answer=None,
             errors=[query_result.error or "Query execution failed."],
+            self_corrected=self_corrected,
         )
 
     generated_answer = generate_answer(question, validation.sql, query_result.rows, provider)
@@ -193,14 +244,15 @@ def _finish_with_sql(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         served_from_cache=served_from_cache,
+        self_corrected=self_corrected,
     )
 
     if not served_from_cache:
         save_to_cache(question, connection_id, db, sql=validation.sql, is_ambiguous=False)
 
     logger.info(
-        "Query succeeded | cache=%s | tokens=%d | exec_ms=%.0f | question=%s",
-        served_from_cache, input_tokens + output_tokens, query_result.execution_ms, _short(question),
+        "Query succeeded | cache=%s | self_corrected=%s | tokens=%d | exec_ms=%.0f | question=%s",
+        served_from_cache, self_corrected, input_tokens + output_tokens, query_result.execution_ms, _short(question),
     )
 
     return QueryResponse(
@@ -214,12 +266,13 @@ def _finish_with_sql(
         },
         answer=generated_answer.text,
         errors=[],
+        self_corrected=self_corrected,
     )
 
 
 def _run_followup_pipeline(
     question: str,
-    provider: GeminiProvider,
+    provider: LLMProvider,
     db: Session,
     connection_id: int | None,
     engine,
@@ -239,13 +292,21 @@ def _run_followup_pipeline(
     llm_responses.append(generated.raw_response)
 
     return _finish_with_sql(
-        question, generated.sql, provider, db, llm_responses, connection_id, engine, served_from_cache=False
+        question,
+        generated.sql,
+        provider,
+        db,
+        llm_responses,
+        connection_id,
+        engine,
+        served_from_cache=False,
+        table_names=selection.table_names,
     )
 
 
 @router.post("/query", response_model=QueryResponse)
 def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResponse:
-    provider = GeminiProvider(api_key=settings.gemini_api_key)
+    provider = get_llm_provider(settings)
 
     is_followup = request.trace_id is not None or request.clarification_answer is not None
 
@@ -375,6 +436,13 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
         )
 
     return _finish_with_sql(
-        request.question, combined.sql, provider, db, llm_responses,
-        connection_id=connection_id, engine=engine, served_from_cache=False,
+        request.question,
+        combined.sql,
+        provider,
+        db,
+        llm_responses,
+        connection_id=connection_id,
+        engine=engine,
+        served_from_cache=False,
+        table_names=selection.table_names,
     )
