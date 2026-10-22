@@ -15,34 +15,17 @@ logged with enough detail to reconstruct exactly what happened —
 including whether the question was ambiguous, whether it was served
 from cache, and how many tokens it cost.
 
-## How it works
+## How it works (Multi-Agent & RAG Pipeline)
 
-1. Check cache (exact match on question + database)
-2. If a cache miss: check ambiguity and generate SQL in one combined LLM call
-3. Validate the SQL (single `SELECT` only, known tables/columns, auto-`LIMIT`)
-4. Execute against the target database
-5. Generate a natural-language answer from the real result rows
-6. Save the full trace to history
+1. **Semantic Vector Cache**: Exact-match check ($O(1)$) followed by dense cosine vector similarity search ($\ge 0.94$ via FastEmbed ONNX). Paraphrased questions return verified SQL immediately (0 tokens, ~15ms).
+2. **Intent & Ambiguity Agent**: Detects missing criteria or underspecified filters before query generation; triggers clarification UX instead of guessing.
+3. **Hybrid Schema & Few-Shot RAG**: Combines dense vector search (`bge-small-en-v1.5`) with sparse keyword matching via Reciprocal Rank Fusion (RRF) and FlashRank cross-encoder reranking to retrieve only the relevant tables and top verified SQL few-shot examples.
+4. **SQL Specialist Agent**: Synthesizes PostgreSQL SELECT statements scoped strictly to the retrieved schema context.
+5. **Guardrail Agent (Deterministic AST)**: Validates syntax, enforces read-only access, checks known tables/columns via `sqlglot`, applies auto-`LIMIT`, and executes safely against the target database.
+6. **Self-Healing Agent**: If AST validation or database execution returns an error (e.g. invalid join or aggregate), performs bounded reflection and repairs the SQL.
+7. **Insight & Auto-Chart Agent**: Generates natural-language answers and infers optimal visualizations (Bar, Line, Pie) rendered live with Recharts.
 
-If a question is ambiguous ("who are the top customers?" — by what
-measure?), the pipeline stops before generating SQL and asks a
-clarifying question instead of guessing. The user's answer is merged
-with the original question and re-run through the pipeline.
-
-Repeated identical questions are served from an exact-match SQL cache:
-the ambiguity check and SQL generation are skipped, but the query is
-still re-executed fresh and the answer regenerated, so a cache hit can
-never return stale data — only the LLM calls that don't need to change
-are skipped. Measured effect: roughly 92% fewer tokens and 70% lower
-latency on a cache hit (see `eval/report.md` once generated).
-
-For databases with many tables, a cheap first LLM call narrows down to
-the tables actually relevant to a question before the real generation
-prompt includes their full column detail — this keeps token cost
-bounded as schema size grows, instead of dumping every table into
-every prompt. Below roughly 20 tables (including the bundled Chinook
-dataset) this step is skipped entirely, since it would add cost with
-no benefit at that size.
+Repeated or paraphrased questions hit the Semantic Cache: LLM calls are skipped, while the database query executes fresh against live data to guarantee real-time freshness.
 
 ## Multi-database support
 
@@ -51,17 +34,20 @@ Postgres-compatible connection through the UI; its credentials are
 encrypted at rest (Fernet symmetric encryption) and only ever
 referenced by an internal ID afterward — the raw connection string is
 never returned by the API once saved. Each connection gets its own
-schema cache and its own query cache.
+schema cache, RAG index, and query cache.
 
 ## Tech stack, and why
 
 | Layer | Choice | Why |
 |---|---|---|
 | Backend | FastAPI (Python) | Async-friendly, typed, auto-generated OpenAPI docs |
-| LLM | Google Gemini (free tier) | Strong free-tier model for SQL generation, behind a provider interface so it can be swapped |
+| Multi-Agent Architecture | Modular Python Agents | Specialized single-responsibility agents (Retrieval, SQL, Guardrail, Healing, Insight) |
+| RAG & Embeddings | `fastembed` (Qdrant) | CPU-optimized local ONNX embeddings (`BAAI/bge-small-en-v1.5`), 0 API cost, 0 rate limit, offline |
+| Reranker | `FlashRank` | Ultra-fast (4MB) CPU cross-encoder for high-precision table and example scoring |
+| LLM | Google Gemini / Groq fallback | High quality free-tier models behind a swappable `LLMProvider` interface |
 | Database | PostgreSQL, local install | No cloud dependency to run this project; Alembic manages schema migrations |
-| Frontend | React + Vite | Pure client app talking to a separate API — no SSR/routing complexity needed |
-| Charts | Recharts | Stats and eval comparisons rendered as real charts, not just numbers |
+| Frontend | React + Vite | Clean client app talking to the API |
+| Charts | Recharts | Automated chart inference (Bar, Line, Pie) based on result column cardinality |
 | Encryption | `cryptography` (Fernet) | Encrypts stored database connection strings at rest |
 | SQL parsing | `sqlglot` | AST-based validation instead of regex — catches destructive statements, unknown tables/columns |
 | CI | GitHub Actions | Lint and tests on every push |

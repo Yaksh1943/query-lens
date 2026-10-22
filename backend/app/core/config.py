@@ -36,9 +36,20 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(default="http://localhost:11434/v1")
     ollama_model: str = Field(default="qwen2.5-coder:7b")
 
-    # --- Agentic Self-Healing ---
+    # --- Agentic Pipeline & Self-Healing ---
+    enable_agentic_pipeline: bool = Field(default=True)
     enable_self_healing: bool = Field(default=True)
-    max_self_healing_retries: int = Field(default=1)
+    max_self_healing_retries: int = Field(default=2)
+
+    # --- RAG & Semantic Cache ---
+    embedding_provider: str = Field(default="fastembed")  # fastembed or gemini
+    fastembed_model: str = Field(default="BAAI/bge-small-en-v1.5")
+    enable_semantic_cache: bool = Field(default=True)
+    semantic_cache_threshold: float = Field(default=0.94)  # cosine similarity threshold
+    enable_schema_rag: bool = Field(default=True)
+    enable_reranking: bool = Field(default=True)
+    rag_top_k_tables: int = Field(default=5)
+    rag_top_k_golden_queries: int = Field(default=2)
 
     # --- CORS ---
     cors_allowed_origins: list[str] = Field(

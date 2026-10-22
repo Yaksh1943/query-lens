@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.agents.orchestrator import AgentOrchestrator
 from app.core.combined_check import check_ambiguity_and_generate_sql
 from app.core.config import get_settings
 from app.core.query_cache import get_cached, save_to_cache
@@ -56,6 +57,8 @@ class QueryResponse(BaseModel):
     clarification_question: str | None = None
     errors: list[str] = []
     self_corrected: bool = False
+    chart_recommendation: dict | None = None
+    retrieved_tables: list[str] = []
 
 
 def _sample_rows(rows: list[dict], limit: int = 3) -> list[dict]:
@@ -304,6 +307,76 @@ def _run_followup_pipeline(
     )
 
 
+def _execute_agentic_pipeline(
+    question: str,
+    connection_id: int | None,
+    engine,
+    db: Session,
+    provider: LLMProvider,
+    skip_ambiguity_check: bool = False,
+) -> QueryResponse:
+    orchestrator = AgentOrchestrator(provider)
+    state = orchestrator.execute_pipeline(
+        question=question,
+        connection_id=connection_id,
+        engine=engine,
+        db=db,
+        skip_ambiguity_check=skip_ambiguity_check,
+    )
+
+    input_tokens, output_tokens = _sum_tokens(state.llm_responses)
+    result_summary = (
+        json.dumps(
+            {"row_count": state.row_count, "sample_rows": _sample_rows(state.rows)},
+            default=str,
+        )
+        if state.rows or state.is_valid_sql
+        else None
+    )
+
+    errors = []
+    if state.validation_errors:
+        errors.extend(state.validation_errors)
+    if state.execution_error:
+        errors.append(state.execution_error)
+
+    success = state.is_valid_sql and state.execution_error is None and not state.is_ambiguous
+
+    history = _save_history(
+        db,
+        question=question,
+        generated_sql=state.sql or "",
+        success=success,
+        connection_id=connection_id,
+        result_summary=result_summary,
+        answer=state.answer,
+        clarification_question=state.clarification_question,
+        error="; ".join(errors) if errors else None,
+        execution_ms=state.execution_ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        served_from_cache=state.is_cache_hit,
+        self_corrected=state.self_corrected,
+    )
+
+    return QueryResponse(
+        trace_id=history.id,
+        sql=state.sql,
+        success=success,
+        result={
+            "columns": state.columns,
+            "rows": state.rows,
+            "row_count": state.row_count,
+        },
+        answer=state.answer,
+        clarification_question=state.clarification_question,
+        errors=errors,
+        self_corrected=state.self_corrected,
+        chart_recommendation=state.chart_recommendation,
+        retrieved_tables=state.retrieved_tables,
+    )
+
+
 @router.post("/query", response_model=QueryResponse)
 def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResponse:
     provider = get_llm_provider(settings)
@@ -329,6 +402,11 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
 
         merged_question = f"{original.question} (Clarification: {request.clarification_answer})"
         logger.info("Follow-up received | trace_id=%d", request.trace_id)
+
+        if settings.enable_agentic_pipeline:
+            return _execute_agentic_pipeline(
+                merged_question, connection_id, engine, db, provider, skip_ambiguity_check=True
+            )
         return _run_followup_pipeline(merged_question, provider, db, connection_id=connection_id, engine=engine)
 
     if not request.question:
@@ -338,6 +416,11 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
     engine = get_engine_for_connection(connection_id, db)
 
     logger.info("Question received | connection_id=%s | question=%s", connection_id, _short(request.question))
+
+    if settings.enable_agentic_pipeline:
+        return _execute_agentic_pipeline(
+            request.question, connection_id, engine, db, provider, skip_ambiguity_check=False
+        )
 
     cached = get_cached(request.question, connection_id, db)
 

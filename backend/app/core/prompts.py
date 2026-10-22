@@ -29,6 +29,37 @@ Question: {question}
 SQL query:"""
 
 
+def build_rag_sql_prompt(question: str, schema_text: str, golden_examples: list[dict] | None = None) -> str:
+    """
+    Builds SQL generation prompt with schema context and retrieved few-shot golden examples.
+    """
+    examples_text = ""
+    if golden_examples:
+        lines = ["\nRelevant Example Queries:"]
+        for i, ex in enumerate(golden_examples, 1):
+            lines.append(f"Example {i}:")
+            lines.append(f"Question: {ex.get('question')}")
+            lines.append(f"SQL: {ex.get('sql')}\n")
+        examples_text = "\n".join(lines)
+
+    return f"""You are a PostgreSQL expert. Given a database schema, relevant reference examples, and a question, \
+write a single SQL query that answers the question.
+
+Database schema:
+{schema_text}
+{examples_text}
+Rules:
+- Output ONLY the raw SQL query. No markdown code fences, no explanation, no comments.
+- Use only the exact table and column names given in the schema above.
+- Write a single SELECT statement only. Never write INSERT, UPDATE, DELETE, DROP, or ALTER.
+- If the question requires aggregation (counts, sums, averages), use appropriate GROUP BY / aggregate functions.
+- If a natural row limit isn't implied by the question, do not add one — LIMIT will be applied automatically if needed.
+
+Question: {question}
+
+SQL query:"""
+
+
 def build_answer_prompt(question: str, sql: str, rows: list[dict]) -> str:
     """
     Builds the prompt that asks the LLM to turn a question + the SQL
