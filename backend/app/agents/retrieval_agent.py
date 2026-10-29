@@ -3,6 +3,8 @@ Retrieval Agent: Scopes database schema and extracts golden few-shot queries usi
 """
 import time
 
+from typing import Any
+
 from app.agents.state import AgentState
 from app.core.config import get_settings
 from app.db.schema import get_schema_snapshot
@@ -15,8 +17,8 @@ logger = get_logger(__name__)
 class RetrievalAgent:
     """Specialist agent for Schema Linking and Few-Shot Example Retrieval."""
 
-    def __init__(self) -> None:
-        self.settings = get_settings()
+    def __init__(self, settings: Any | None = None) -> None:
+        self.settings = settings if settings is not None else get_settings()
 
     def run(self, state: AgentState) -> AgentState:
         start = time.monotonic()

@@ -6,6 +6,8 @@ AST validation failures or database runtime execution errors.
 """
 import time
 
+from typing import Any
+
 from app.agents.guard_agent import GuardAgent
 from app.agents.state import AgentState
 from app.core.config import get_settings
@@ -19,9 +21,9 @@ logger = get_logger(__name__)
 class HealingAgent:
     """Specialist agent for error diagnosis, reflection, and SQL self-correction."""
 
-    def __init__(self, provider: LLMProvider) -> None:
+    def __init__(self, provider: LLMProvider, settings: Any | None = None) -> None:
         self.provider = provider
-        self.settings = get_settings()
+        self.settings = settings if settings is not None else get_settings()
         self.guard = GuardAgent()
 
     def run(self, state: AgentState) -> AgentState:

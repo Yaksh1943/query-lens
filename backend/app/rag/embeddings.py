@@ -7,7 +7,7 @@ Supports:
 - GeminiEmbeddingProvider: Google Gemini text-embedding-004 via google-genai SDK.
 """
 from abc import ABC, abstractmethod
-from functools import lru_cache
+import threading
 from typing import Sequence
 
 
@@ -106,14 +106,33 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         return self._dim
 
 
-@lru_cache
+_PROVIDER_LOCK = threading.Lock()
+_CACHED_PROVIDER: EmbeddingProvider | None = None
+_CACHED_CONFIG: tuple[str, str, str] | None = None
+
+
 def get_embedding_provider(settings: Settings | None = None) -> EmbeddingProvider:
+    global _CACHED_PROVIDER, _CACHED_CONFIG
+
     if settings is None:
         settings = get_settings()
 
     provider_name = settings.embedding_provider.lower().strip()
-    if provider_name == "gemini" and settings.gemini_api_key:
-        return GeminiEmbeddingProvider(api_key=settings.gemini_api_key)
+    api_key = settings.gemini_api_key if provider_name == "gemini" else ""
+    model_name = settings.fastembed_model if provider_name != "gemini" else "text-embedding-004"
+    config_key = (provider_name, api_key, model_name)
 
-    # Default to fastembed (local, 0 cost, instant)
-    return FastEmbedProvider(model_name=settings.fastembed_model)
+    if _CACHED_PROVIDER is not None and _CACHED_CONFIG == config_key:
+        return _CACHED_PROVIDER
+
+    with _PROVIDER_LOCK:
+        if _CACHED_PROVIDER is not None and _CACHED_CONFIG == config_key:
+            return _CACHED_PROVIDER
+
+        if provider_name == "gemini" and settings.gemini_api_key:
+            _CACHED_PROVIDER = GeminiEmbeddingProvider(api_key=settings.gemini_api_key)
+        else:
+            _CACHED_PROVIDER = FastEmbedProvider(model_name=settings.fastembed_model)
+
+        _CACHED_CONFIG = config_key
+        return _CACHED_PROVIDER
