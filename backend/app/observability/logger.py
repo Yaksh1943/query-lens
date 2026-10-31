@@ -1,10 +1,8 @@
 """
-Structured logging.
+Structured JSON logger for QueryLens.
 
-Phase 1 scope: emit structured (JSON-friendly) log records for each
-pipeline stage. This is deliberately NOT a metrics/dashboard system —
-that is Phase 4 (analytics), built on top of data captured here once
-there is real pipeline activity to show.
+Configures standard stdout logging formatters with timestamps, log levels,
+logger namespaces, and message payloads.
 """
 import logging
 import sys

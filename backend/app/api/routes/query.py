@@ -1,29 +1,21 @@
 """
-POST /api/query — the Text-to-SQL pipeline: resolve database ->
-check cache -> select tables -> check ambiguity + generate SQL (one
-combined call) -> validate -> execute -> generate answer -> save
-history.
+Query API Routes.
 
-The ambiguity check and SQL generation used to be two separate LLM
-calls, each sending the full schema — see app.core.combined_check for
-the single-call version that halves that duplicated cost. The eval
-harness (eval/run_eval.py) still measures the old two-call flow in
-isolation to score ambiguity-detection accuracy on its own; it has
-not been updated to reflect this combined flow yet — a known gap.
-
-See app.core.query_cache, app.core.schema_selection, and
-app.db.connection_manager for the caching, schema-scaling, and
-multi-database logic this route orchestrates.
+Endpoints for executing natural language questions against target databases,
+handling semantic caching, multi-agent orchestration, and clarification follow-ups.
 """
 import json
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.agents.orchestrator import AgentOrchestrator
 from app.core.combined_check import check_ambiguity_and_generate_sql
 from app.core.config import get_settings
+from app.core.exceptions import InvalidQueryRequestError, QueryHistoryNotFoundError
 from app.core.query_cache import get_cached, save_to_cache
 from app.core.schema_selection import select_relevant_tables
 from app.core.sql_generation import generate_answer, generate_sql, repair_sql
@@ -52,17 +44,13 @@ class QueryResponse(BaseModel):
     trace_id: int
     sql: str | None
     success: bool
-    result: dict
+    result: dict[str, Any]
     answer: str | None
     clarification_question: str | None = None
-    errors: list[str] = []
+    errors: list[str] = Field(default_factory=list)
     self_corrected: bool = False
-    chart_recommendation: dict | None = None
-    retrieved_tables: list[str] = []
-
-
-def _sample_rows(rows: list[dict], limit: int = 3) -> list[dict]:
-    return rows[:limit]
+    chart_recommendation: dict[str, Any] | None = None
+    retrieved_tables: list[str] = Field(default_factory=list)
 
 
 def _sum_tokens(responses: list[LLMResponse]) -> tuple[int, int]:
@@ -121,16 +109,16 @@ def _finish_with_sql(
     db: Session,
     llm_responses: list[LLMResponse],
     connection_id: int | None,
-    engine,
+    engine: Engine,
     served_from_cache: bool,
     table_names: list[str] | None = None,
 ) -> QueryResponse:
-    """Validate -> execute -> generate answer -> save history. Shared by cache-hit and cache-miss paths."""
+    """Validate, execute, synthesize answer, and record trace history."""
     schema = get_schema_snapshot(engine)
     validation = validate_sql(sql, schema)
     self_corrected = False
 
-    # Self-Correction Step 1: Repair validation failure (AST, missing column/table, etc.)
+    # Validation self-correction
     if not validation.is_valid and settings.enable_self_healing and not served_from_cache:
         logger.info("Attempting SQL self-correction after validation failure: %s", "; ".join(validation.errors))
         repair = repair_sql(
@@ -148,12 +136,10 @@ def _finish_with_sql(
             sql = repaired_val.sql
             validation = repaired_val
             self_corrected = True
-        else:
-            validation = repaired_val
 
     if not validation.is_valid:
         input_tokens, output_tokens = _sum_tokens(llm_responses)
-        logger.warning("Validation failed: %s | question=%s", "; ".join(validation.errors), _short(question))
+        logger.warning("SQL validation failed: %s | question=%s", "; ".join(validation.errors), _short(question))
         history = _save_history(
             db,
             question=question,
@@ -178,13 +164,13 @@ def _finish_with_sql(
 
     query_result = execute_query(validation.sql, engine)
 
-    # Self-Correction Step 2: Repair runtime database execution failure (e.g. GROUP BY mismatch, division by zero)
-    if not query_result.success and settings.enable_self_healing and not served_from_cache and not self_corrected:
-        logger.info("Attempting SQL self-correction after database execution error: %s", query_result.error)
+    # Execution self-correction
+    if not query_result.success and settings.enable_self_healing and not served_from_cache:
+        logger.info("Attempting SQL self-correction after DB execution failure: %s", query_result.error)
         repair = repair_sql(
             question=question,
             failed_sql=validation.sql,
-            error_message=query_result.error or "Execution error",
+            error_message=query_result.error or "Unknown database execution error",
             provider=provider,
             engine=engine,
             table_names=table_names,
@@ -229,10 +215,9 @@ def _finish_with_sql(
     llm_responses.append(generated_answer.raw_response)
 
     result_summary = json.dumps(
-        {"row_count": query_result.row_count, "sample_rows": _sample_rows(query_result.rows)},
+        {"row_count": query_result.row_count, "sample_rows": query_result.rows[:3]},
         default=str,
     )
-
     input_tokens, output_tokens = _sum_tokens(llm_responses)
 
     history = _save_history(
@@ -253,11 +238,6 @@ def _finish_with_sql(
     if not served_from_cache:
         save_to_cache(question, connection_id, db, sql=validation.sql, is_ambiguous=False)
 
-    logger.info(
-        "Query succeeded | cache=%s | self_corrected=%s | tokens=%d | exec_ms=%.0f | question=%s",
-        served_from_cache, self_corrected, input_tokens + output_tokens, query_result.execution_ms, _short(question),
-    )
-
     return QueryResponse(
         trace_id=history.id,
         sql=validation.sql,
@@ -273,48 +253,15 @@ def _finish_with_sql(
     )
 
 
-def _run_followup_pipeline(
-    question: str,
-    provider: LLMProvider,
-    db: Session,
-    connection_id: int | None,
-    engine,
-) -> QueryResponse:
-    """
-    Follow-ups skip the ambiguity check (the user just answered one) —
-    table selection -> SQL generation only, then the shared tail.
-    """
-    llm_responses: list[LLMResponse] = []
-
-    selection = select_relevant_tables(question, provider, engine)
-    if selection.raw_response is not None:
-        llm_responses.append(selection.raw_response)
-        logger.info("Table selection engaged | selected=%s", selection.table_names)
-
-    generated = generate_sql(question, provider, engine, table_names=selection.table_names)
-    llm_responses.append(generated.raw_response)
-
-    return _finish_with_sql(
-        question,
-        generated.sql,
-        provider,
-        db,
-        llm_responses,
-        connection_id,
-        engine,
-        served_from_cache=False,
-        table_names=selection.table_names,
-    )
-
-
 def _execute_agentic_pipeline(
     question: str,
     connection_id: int | None,
-    engine,
+    engine: Engine,
     db: Session,
     provider: LLMProvider,
     skip_ambiguity_check: bool = False,
 ) -> QueryResponse:
+    """Executes the multi-agent pipeline and records telemetry into QueryHistory."""
     orchestrator = AgentOrchestrator(provider)
     state = orchestrator.execute_pipeline(
         question=question,
@@ -327,7 +274,7 @@ def _execute_agentic_pipeline(
     input_tokens, output_tokens = _sum_tokens(state.llm_responses)
     result_summary = (
         json.dumps(
-            {"row_count": state.row_count, "sample_rows": _sample_rows(state.rows)},
+            {"row_count": state.row_count, "sample_rows": state.rows[:3]},
             default=str,
         )
         if state.rows or state.is_valid_sql
@@ -379,54 +326,59 @@ def _execute_agentic_pipeline(
 
 @router.post("/query", response_model=QueryResponse)
 def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResponse:
-    provider = get_llm_provider(settings)
-
+    # 1. Handle clarification follow-up query
     is_followup = request.trace_id is not None or request.clarification_answer is not None
-
     if is_followup:
         if request.trace_id is None or request.clarification_answer is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Both trace_id and clarification_answer are required for a follow-up.",
-            )
+            raise InvalidQueryRequestError("Both trace_id and clarification_answer are required for follow-up queries.")
 
         original = db.get(QueryHistory, request.trace_id)
         if original is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No query history found for trace_id {request.trace_id}.",
-            )
+            raise QueryHistoryNotFoundError(request.trace_id)
 
         connection_id = original.connection_id
         engine = get_engine_for_connection(connection_id, db)
-
         merged_question = f"{original.question} (Clarification: {request.clarification_answer})"
-        logger.info("Follow-up received | trace_id=%d", request.trace_id)
+        logger.info("Clarification follow-up received | trace_id=%d", request.trace_id)
 
+        provider = get_llm_provider(settings)
         if settings.enable_agentic_pipeline:
             return _execute_agentic_pipeline(
                 merged_question, connection_id, engine, db, provider, skip_ambiguity_check=True
             )
-        return _run_followup_pipeline(merged_question, provider, db, connection_id=connection_id, engine=engine)
 
+        # Fallback non-agentic flow
+        selection = select_relevant_tables(merged_question, provider, engine)
+        generated = generate_sql(merged_question, provider, engine, table_names=selection.table_names)
+        return _finish_with_sql(
+            merged_question,
+            generated.sql,
+            provider,
+            db,
+            [resp for resp in [selection.raw_response, generated.raw_response] if resp is not None],
+            connection_id,
+            engine,
+            served_from_cache=False,
+            table_names=selection.table_names,
+        )
+
+    # 2. Handle standard new question
     if not request.question:
-        raise HTTPException(status_code=400, detail="question is required.")
+        raise InvalidQueryRequestError("Field 'question' is required.")
 
     connection_id = request.connection_id
     engine = get_engine_for_connection(connection_id, db)
-
     logger.info("Question received | connection_id=%s | question=%s", connection_id, _short(request.question))
 
+    provider = get_llm_provider(settings)
     if settings.enable_agentic_pipeline:
         return _execute_agentic_pipeline(
             request.question, connection_id, engine, db, provider, skip_ambiguity_check=False
         )
 
+    # 3. Fallback non-agentic flow (cache check -> table selection -> combined check)
     cached = get_cached(request.question, connection_id, db)
-
     if cached is not None:
-        logger.info("Cache hit | hit_count=%d", cached.hit_count)
-
         if cached.is_ambiguous:
             history = _save_history(
                 db,
@@ -446,23 +398,22 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
                 clarification_question=cached.clarification_question,
                 errors=[],
             )
-
         if cached.sql:
             return _finish_with_sql(
-                request.question, cached.sql, provider, db, llm_responses=[],
-                connection_id=connection_id, engine=engine, served_from_cache=True,
+                request.question,
+                cached.sql,
+                provider,
+                db,
+                llm_responses=[],
+                connection_id=connection_id,
+                engine=engine,
+                served_from_cache=True,
             )
 
-    logger.info("Cache miss")
-
-    # Table selection (large schemas only), then one combined call for
-    # both ambiguity-checking and SQL generation.
-    llm_responses: list[LLMResponse] = []
-
     selection = select_relevant_tables(request.question, provider, engine)
+    llm_responses: list[LLMResponse] = []
     if selection.raw_response is not None:
         llm_responses.append(selection.raw_response)
-        logger.info("Table selection engaged | selected=%s", selection.table_names)
 
     combined = check_ambiguity_and_generate_sql(
         request.question, provider, engine, table_names=selection.table_names
@@ -470,7 +421,6 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
     llm_responses.append(combined.raw_response)
 
     if combined.is_ambiguous:
-        logger.info("Ambiguity detected")
         input_tokens, output_tokens = _sum_tokens(llm_responses)
         history = _save_history(
             db,
@@ -483,8 +433,11 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
             output_tokens=output_tokens,
         )
         save_to_cache(
-            request.question, connection_id, db,
-            is_ambiguous=True, clarification_question=combined.clarification_question,
+            request.question,
+            connection_id,
+            db,
+            is_ambiguous=True,
+            clarification_question=combined.clarification_question,
         )
         return QueryResponse(
             trace_id=history.id,
@@ -498,7 +451,6 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResp
 
     if not combined.sql:
         input_tokens, output_tokens = _sum_tokens(llm_responses)
-        logger.warning("Combined call returned no SQL and no ambiguity flag | question=%s", _short(request.question))
         history = _save_history(
             db,
             question=request.question,
