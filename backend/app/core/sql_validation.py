@@ -56,12 +56,18 @@ def validate_sql(sql: str, schema: dict) -> ValidationResult:
             errors=[f"Only SELECT statements are allowed, got: {statement.key.upper()}"],
         )
 
-    known_tables = {name.lower() for name in schema.keys()}
-    known_columns = {
-        col["name"].lower()
-        for table_info in schema.values()
-        for col in table_info["columns"]
-    }
+    known_tables = schema.get("__known_tables__")
+    if known_tables is None:
+        known_tables = {name.lower() for name in schema.keys() if not name.startswith("__")}
+
+    known_columns = schema.get("__known_columns__")
+    if known_columns is None:
+        known_columns = {
+            col["name"].lower()
+            for name, table_info in schema.items()
+            if not name.startswith("__")
+            for col in table_info.get("columns", [])
+        }
 
     # Aliases defined in the SELECT clause (e.g. SUM(x) AS total) are
     # valid to reference elsewhere in the query (ORDER BY, HAVING),

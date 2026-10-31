@@ -1,6 +1,8 @@
 """
 Unit and integration tests for specialized AI Agents (Guard, Insight, Healing, SQL).
 """
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -8,6 +10,7 @@ from app.agents.guard_agent import GuardAgent
 from app.agents.healing_agent import HealingAgent
 from app.agents.insight_agent import _infer_chart_recommendation
 from app.agents.state import AgentState
+from app.db.analytics import execute_query
 from app.llm.provider import LLMProvider, LLMResponse
 
 
@@ -68,6 +71,26 @@ def test_chart_recommendation_inference():
     )
     assert bar_rec is not None
     assert bar_rec["type"] == "bar"
+
+    # 4. Decimal support and first row None
+    decimal_rec = _infer_chart_recommendation(
+        columns=["dept", "revenue"],
+        rows=[
+            {"dept": "Engineering", "revenue": None},
+            {"dept": "Sales", "revenue": Decimal("15000.50")},
+            {"dept": "Support", "revenue": Decimal("8500.00")},
+        ],
+    )
+    assert decimal_rec is not None
+    assert decimal_rec["type"] == "pie"
+    assert decimal_rec["value_key"] == "revenue"
+
+
+def test_execute_query_limit(memory_db):
+    res = execute_query("SELECT id, name FROM items", engine=memory_db, max_rows=1)
+    assert res.success is True
+    assert len(res.rows) == 1
+    assert res.row_count == 1
 
 
 def test_guard_agent_valid_and_execution(memory_db):

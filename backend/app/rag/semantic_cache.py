@@ -10,6 +10,8 @@ Algorithm:
 2. If exact miss, dense cosine similarity search over cached questions for the same connection_id.
 3. If similarity >= threshold (default 0.94), return cached SQL and increment hit stats.
 """
+import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -26,6 +28,13 @@ logger = get_logger(__name__)
 # Dedicated vector store for semantic query cache
 _CACHE_VECTOR_STORE = InMemoryVectorStore()
 _CACHE_HYDRATED: bool = False
+_CACHE_LOCK = threading.Lock()
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_query(question: str) -> str:
+    """Lowercase, trim, and collapse all whitespace sequences to single space."""
+    return _WHITESPACE_RE.sub(" ", question.strip().lower())
 
 
 @dataclass
@@ -40,26 +49,30 @@ def _hydrate_cache_if_needed(db: Session, embedding_provider: EmbeddingProvider)
     if _CACHE_HYDRATED:
         return
 
-    try:
-        entries = db.query(QueryCache).all()
-        if entries:
-            questions = [e.question_normalized for e in entries]
-            vectors = embedding_provider.embed_batch(questions)
-            docs = [
-                VectorDocument(
-                    id=f"cache:{e.id}",
-                    text=e.question_normalized,
-                    vector=v,
-                    metadata={"cache_id": e.id, "connection_id": e.connection_id},
-                )
-                for e, v in zip(entries, vectors, strict=True)
-            ]
-            _CACHE_VECTOR_STORE.add_documents(docs)
-            logger.info("Hydrated Semantic Cache with %d entries", len(entries))
-    except Exception as e:
-        logger.warning("Could not hydrate semantic cache from DB: %s", e)
-    finally:
-        _CACHE_HYDRATED = True
+    with _CACHE_LOCK:
+        if _CACHE_HYDRATED:
+            return
+
+        try:
+            entries = db.query(QueryCache).all()
+            if entries:
+                questions = [e.question_normalized for e in entries]
+                vectors = embedding_provider.embed_batch(questions)
+                docs = [
+                    VectorDocument(
+                        id=f"cache:{e.id}",
+                        text=e.question_normalized,
+                        vector=v,
+                        metadata={"cache_id": e.id, "connection_id": e.connection_id},
+                    )
+                    for e, v in zip(entries, vectors, strict=True)
+                ]
+                _CACHE_VECTOR_STORE.add_documents(docs)
+                logger.info("Hydrated Semantic Cache with %d entries", len(entries))
+        except Exception as e:
+            logger.warning("Could not hydrate semantic cache from DB: %s", e)
+        finally:
+            _CACHE_HYDRATED = True
 
 
 def get_cached_semantic(
@@ -76,7 +89,7 @@ def get_cached_semantic(
     if threshold is None:
         threshold = settings.semantic_cache_threshold
 
-    normalized = question.strip().lower()
+    normalized = _normalize_query(question)
 
     # Step 1: Instant exact-match check (O(1))
     exact_entry = (
@@ -142,7 +155,7 @@ def save_to_semantic_cache(
 ) -> QueryCache:
     """Saves to DB query_cache and updates the in-memory vector index."""
     settings = get_settings()
-    normalized = question.strip().lower()
+    normalized = _normalize_query(question)
 
     existing = (
         db.query(QueryCache)

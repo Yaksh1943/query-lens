@@ -6,6 +6,7 @@ Time Complexity:
 - Space Complexity: O(T * D) floats in memory (~30KB for 100 tables).
 - Cached by engine id() so it runs exactly once per database connection.
 """
+import re
 import threading
 
 from sqlalchemy.engine import Engine
@@ -114,9 +115,12 @@ def index_database_schema(
         texts_to_embed = [c.to_text() for c in chunks]
         embeddings = embedding_provider.embed_batch(texts_to_embed)
 
+        token_re = re.compile(r"\b[a-zA-Z0-9_]+\b")
         documents: list[VectorDocument] = []
         for chunk, emb in zip(chunks, embeddings, strict=True):
             doc_id = f"schema:{engine_key}:{chunk.table_name}"
+            tokenized_table = set(token_re.findall(chunk.table_name.lower()))
+            tokenized_columns = {t for c in chunk.columns for t in token_re.findall(c["name"].lower())}
             documents.append(
                 VectorDocument(
                     id=doc_id,
@@ -127,6 +131,8 @@ def index_database_schema(
                         "engine_id": engine_key,
                         "table_name": chunk.table_name,
                         "columns": [c["name"] for c in chunk.columns],
+                        "tokenized_table": tokenized_table,
+                        "tokenized_columns": tokenized_columns,
                     },
                 )
             )

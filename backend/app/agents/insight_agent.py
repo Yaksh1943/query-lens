@@ -5,6 +5,7 @@ Synthesizes data answers and automatically infers optimal visualization charts
 (bar, line, pie, table) for direct rendering in frontend charts (Recharts).
 """
 import time
+from decimal import Decimal
 from typing import Any
 
 from app.agents.state import AgentState
@@ -15,6 +16,17 @@ from app.observability.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _is_numeric_val(val: Any) -> bool:
+    if val is None:
+        return False
+    if isinstance(val, (int, float, Decimal)):
+        return True
+    if isinstance(val, str):
+        cleaned = val.strip().lstrip("+-")
+        return cleaned.replace(".", "", 1).isdigit() and len(cleaned) > 0
+    return False
+
+
 def _infer_chart_recommendation(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """
     Deterministically deduces the most informative chart type based on column types and cardinality.
@@ -23,18 +35,27 @@ def _infer_chart_recommendation(columns: list[str], rows: list[dict[str, Any]]) 
     if not rows or not columns or len(rows) < 2:
         return None
 
-    # Find numeric and categorical candidates
-    first_row = rows[0]
+    # Sample up to 5 rows to identify non-null types reliably
+    sample_rows = rows[:5]
     numeric_cols = []
     text_cols = []
     date_cols = []
 
     for col in columns:
-        val = first_row.get(col)
         clow = col.lower()
         if any(d in clow for d in ("date", "month", "year", "time", "day")):
             date_cols.append(col)
-        elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace(".", "", 1).isdigit()):
+            continue
+
+        # Look for first non-null sample
+        sample_val = None
+        for r in sample_rows:
+            v = r.get(col)
+            if v is not None:
+                sample_val = v
+                break
+
+        if _is_numeric_val(sample_val):
             numeric_cols.append(col)
         else:
             text_cols.append(col)

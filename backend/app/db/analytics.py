@@ -17,6 +17,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.db.session import analytics_engine
+
+MAX_RESULT_ROWS = 500
+
 
 @dataclass
 class QueryResult:
@@ -28,15 +32,20 @@ class QueryResult:
     error: str | None = None
 
 
-def execute_query(sql: str, engine: Engine) -> QueryResult:
-    """Runs a validated SELECT statement against the given engine."""
+def execute_query(sql: str, engine: Engine | None = None, max_rows: int = MAX_RESULT_ROWS) -> QueryResult:
+    """Runs a validated SELECT statement against the given engine (or default analytics engine)."""
     start = time.monotonic()
+    target_engine = engine or analytics_engine
 
     try:
-        with engine.connect() as conn:
+        with target_engine.connect() as conn:
             result = conn.execute(text(sql))
             columns = list(result.keys())
-            rows = [dict(zip(columns, row)) for row in result.fetchall()]
+            mappings = result.mappings()
+            if max_rows is not None and max_rows > 0:
+                rows = [dict(r) for r in mappings.fetchmany(max_rows)]
+            else:
+                rows = [dict(r) for r in mappings.fetchall()]
 
         execution_ms = (time.monotonic() - start) * 1000
 

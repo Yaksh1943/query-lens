@@ -22,20 +22,24 @@ class VectorDocument:
 
 
 class InMemoryVectorStore:
-    """Thread-safe, vectorized in-memory vector index."""
+    """Thread-safe, vectorized in-memory vector index with metadata inverted index."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._docs: dict[str, VectorDocument] = {}
         self._doc_ids: list[str] = []
+        self._id_to_idx: dict[str, int] = {}
         self._matrix: np.ndarray | None = None  # shape (N, D) normalized float32
+        self._metadata_index: dict[str, dict[Any, set[int]]] = {}
         self._dirty: bool = False
 
     def clear(self) -> None:
         with self._lock:
             self._docs.clear()
             self._doc_ids.clear()
+            self._id_to_idx.clear()
             self._matrix = None
+            self._metadata_index.clear()
             self._dirty = False
 
     def add_documents(self, documents: list[VectorDocument]) -> None:
@@ -44,9 +48,31 @@ class InMemoryVectorStore:
 
         with self._lock:
             for doc in documents:
-                self._docs[doc.id] = doc
-                if doc.id not in self._doc_ids:
+                if doc.id in self._id_to_idx:
+                    idx = self._id_to_idx[doc.id]
+                    # Remove previous metadata mappings for this index
+                    old_doc = self._docs[doc.id]
+                    for k, v in old_doc.metadata.items():
+                        if isinstance(v, (str, int, float, bool)):
+                            s = self._metadata_index.get(k, {}).get(v)
+                            if s:
+                                s.discard(idx)
+                    self._docs[doc.id] = doc
+                else:
+                    idx = len(self._doc_ids)
+                    self._docs[doc.id] = doc
                     self._doc_ids.append(doc.id)
+                    self._id_to_idx[doc.id] = idx
+
+                # Index scalar metadata
+                for k, v in doc.metadata.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        if k not in self._metadata_index:
+                            self._metadata_index[k] = {}
+                        if v not in self._metadata_index[k]:
+                            self._metadata_index[k][v] = set()
+                        self._metadata_index[k][v].add(idx)
+
             self._dirty = True
 
     def _rebuild_matrix(self) -> None:
@@ -67,6 +93,47 @@ class InMemoryVectorStore:
         self._matrix = mat / norms
         self._dirty = False
 
+    def _get_matching_indices(self, filter_metadata: dict[str, Any] | None) -> list[int] | None:
+        """Finds document indices matching all criteria using inverted index where possible."""
+        if not filter_metadata:
+            return None
+
+        matching: set[int] | None = None
+        unindexed_filters: dict[str, Any] = {}
+
+        for k, v in filter_metadata.items():
+            if k in self._metadata_index and isinstance(v, (str, int, float, bool)):
+                indices = self._metadata_index[k].get(v, set())
+                if matching is None:
+                    matching = set(indices)
+                else:
+                    matching = matching.intersection(indices)
+                if not matching:
+                    return []
+            else:
+                unindexed_filters[k] = v
+
+        if matching is None:
+            # Fallback to full range
+            candidate_list = list(range(len(self._doc_ids)))
+        else:
+            candidate_list = sorted(matching)
+
+        if unindexed_filters:
+            filtered = []
+            for idx in candidate_list:
+                doc = self._docs[self._doc_ids[idx]]
+                match = True
+                for k, v in unindexed_filters.items():
+                    if doc.metadata.get(k) != v:
+                        match = False
+                        break
+                if match:
+                    filtered.append(idx)
+            return filtered
+
+        return candidate_list
+
     def search(
         self,
         query_vector: list[float],
@@ -74,12 +141,16 @@ class InMemoryVectorStore:
         filter_metadata: dict[str, Any] | None = None,
     ) -> list[tuple[VectorDocument, float]]:
         """
-        Calculates cosine similarity across all documents matching filter_metadata.
+        Calculates cosine similarity across documents matching filter_metadata.
         Returns sorted list of (VectorDocument, similarity_score) with score in [-1.0, 1.0].
         """
         with self._lock:
             self._rebuild_matrix()
             if self._matrix is None or len(self._doc_ids) == 0:
+                return []
+
+            matched_indices = self._get_matching_indices(filter_metadata)
+            if matched_indices is not None and len(matched_indices) == 0:
                 return []
 
             # Normalize query vector
@@ -88,40 +159,38 @@ class InMemoryVectorStore:
             if q_norm > 0:
                 q = q / q_norm
 
-            # Vectorized dot product for all documents: O(N * D)
-            scores = np.dot(self._matrix, q)
+            # Compute dot product only on matched slice if filtered, else all
+            if matched_indices is not None:
+                sub_matrix = self._matrix[matched_indices]
+                sub_scores = np.dot(sub_matrix, q)
+                candidate_indices = matched_indices
+                scores_array = sub_scores
+            else:
+                scores_array = np.dot(self._matrix, q)
+                candidate_indices = list(range(len(self._doc_ids)))
 
-            # Metadata filtering
-            candidates = []
-            for idx, doc_id in enumerate(self._doc_ids):
-                doc = self._docs[doc_id]
-                if filter_metadata:
-                    match = True
-                    for k, v in filter_metadata.items():
-                        if doc.metadata.get(k) != v:
-                            match = False
-                            break
-                    if not match:
-                        continue
-                candidates.append((idx, float(scores[idx])))
-
-            if not candidates:
+            num_cands = len(candidate_indices)
+            if num_cands == 0:
                 return []
 
-            # If candidates are fewer than or equal to top_k, just sort candidates
-            if len(candidates) <= top_k:
-                candidates.sort(key=lambda x: x[1], reverse=True)
-                return [(self._docs[self._doc_ids[idx]], score) for idx, score in candidates]
+            if num_cands <= top_k:
+                sorted_local_indices = np.argsort(-scores_array)
+                return [
+                    (self._docs[self._doc_ids[candidate_indices[i]]], float(scores_array[i]))
+                    for i in sorted_local_indices
+                ]
 
             # Top-K selection via numpy.argpartition: O(N + K log K)
-            cand_scores = np.array([c[1] for c in candidates], dtype=np.float32)
-            # Find indices of largest top_k elements
-            top_k_sub_indices = np.argpartition(-cand_scores, top_k)[:top_k]
-            # Sort only the top_k slice
-            sorted_order = np.argsort(-cand_scores[top_k_sub_indices])
-            sorted_top_k = [candidates[top_k_sub_indices[i]] for i in sorted_order]
+            top_k_sub_indices = np.argpartition(-scores_array, top_k)[:top_k]
+            sorted_order = np.argsort(-scores_array[top_k_sub_indices])
 
-            return [(self._docs[self._doc_ids[idx]], score) for idx, score in sorted_top_k]
+            return [
+                (
+                    self._docs[self._doc_ids[candidate_indices[top_k_sub_indices[i]]]],
+                    float(scores_array[top_k_sub_indices[i]]),
+                )
+                for i in sorted_order
+            ]
 
     def __len__(self) -> int:
         return len(self._docs)

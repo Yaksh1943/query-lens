@@ -34,9 +34,14 @@ def _strip_code_fences(text: str) -> str:
     return _CODE_FENCE_RE.sub("", text).strip()
 
 
-def detect_ambiguity(question: str, provider: LLMProvider, engine: Engine) -> AmbiguityResult:
-    """Asks the LLM whether the question is answerable unambiguously against the given database."""
-    schema_text = format_schema_for_prompt(engine)
+def detect_ambiguity(
+    question: str,
+    provider: LLMProvider,
+    engine: Engine,
+    table_names: list[str] | None = None,
+) -> AmbiguityResult:
+    """Asks the LLM whether the question is answerable unambiguously against the given database (scoped to table_names if provided)."""
+    schema_text = format_schema_for_prompt(engine, table_names=table_names)
     prompt = build_ambiguity_prompt(question, schema_text)
 
     response = provider.complete(prompt)

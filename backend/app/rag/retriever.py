@@ -91,15 +91,14 @@ class SchemaRetriever:
             dense_ranks[t_name] = rank
             doc_map[t_name] = doc
 
-        # 2. Sparse keyword matching for tables & columns
+        # 2. Sparse keyword matching for tables & columns (leveraging pretokenized sets)
         q_tokens = _tokenize(question)
         sparse_scores: list[tuple[str, float]] = []
         for t_name, doc in doc_map.items():
-            t_tokens = _tokenize(t_name)
-            col_tokens = set()
-            for col in doc.metadata.get("columns", []):
-                col_tokens.update(_tokenize(col))
-
+            t_tokens = doc.metadata.get("tokenized_table") or _tokenize(t_name)
+            col_tokens = doc.metadata.get("tokenized_columns") or {
+                tok for col in doc.metadata.get("columns", []) for tok in _tokenize(col)
+            }
             match_count = len(q_tokens.intersection(t_tokens)) * 3 + len(q_tokens.intersection(col_tokens))
             sparse_scores.append((t_name, float(match_count)))
 

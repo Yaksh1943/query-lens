@@ -2,7 +2,7 @@
 Production Agent Orchestrator.
 
 Orchestrates specialized agents into a deterministic state machine:
-Semantic Cache -> Intent/Ambiguity -> RAG Retrieval -> SQL Generation -> Guardrail -> Self-Healing -> Insight.
+Semantic Cache -> RAG Retrieval -> Intent/Ambiguity (Scoped) -> SQL Generation -> Guardrail -> Self-Healing -> Insight.
 """
 import time
 
@@ -78,11 +78,21 @@ class AgentOrchestrator:
                     return state
 
         # ----------------------------------------------------
-        # Stage 1: Intent & Ambiguity Verification
+        # Stage 1: RAG Schema Linking & Few-Shot Retrieval (Local CPU ~15ms)
+        # ----------------------------------------------------
+        state = self.retrieval_agent.run(state)
+
+        # ----------------------------------------------------
+        # Stage 2: Intent & Ambiguity Verification (Scoped Schema)
         # ----------------------------------------------------
         if not skip_ambiguity_check:
             amb_start = time.monotonic()
-            amb_res = detect_ambiguity(question, self.provider, engine)
+            amb_res = detect_ambiguity(
+                question,
+                self.provider,
+                engine,
+                table_names=state.retrieved_tables,
+            )
             state.llm_responses.append(amb_res.raw_response)
             state.step_latencies["ambiguity_check_ms"] = (time.monotonic() - amb_start) * 1000
 
@@ -98,11 +108,6 @@ class AgentOrchestrator:
                 )
                 state.step_latencies["total_pipeline_ms"] = (time.monotonic() - total_start) * 1000
                 return state
-
-        # ----------------------------------------------------
-        # Stage 2: RAG Schema Linking & Few-Shot Retrieval
-        # ----------------------------------------------------
-        state = self.retrieval_agent.run(state)
 
         # ----------------------------------------------------
         # Stage 3: SQL Generation Specialist
