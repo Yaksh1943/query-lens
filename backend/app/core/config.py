@@ -7,6 +7,7 @@ Nothing here should be hardcoded per-environment.
 """
 from functools import lru_cache
 
+from cryptography.fernet import Fernet
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -60,6 +61,7 @@ class Settings(BaseSettings):
     environment: str = Field(default="local")
 
     encryption_key: str = Field(
+        default_factory=lambda: Fernet.generate_key().decode(),
         description="Fernet key used to encrypt stored database connection strings.",
     )
 

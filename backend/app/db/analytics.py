@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.db.session import analytics_engine
 
 MAX_RESULT_ROWS = 500
+STATEMENT_TIMEOUT_MS = 5000
 
 
 @dataclass
@@ -32,13 +33,23 @@ class QueryResult:
     error: str | None = None
 
 
-def execute_query(sql: str, engine: Engine | None = None, max_rows: int = MAX_RESULT_ROWS) -> QueryResult:
-    """Runs a validated SELECT statement against the given engine (or default analytics engine)."""
+def execute_query(
+    sql: str,
+    engine: Engine | None = None,
+    max_rows: int = MAX_RESULT_ROWS,
+    timeout_ms: int = STATEMENT_TIMEOUT_MS,
+) -> QueryResult:
+    """Runs a validated SELECT statement with execution timeouts and row bounds."""
     start = time.monotonic()
     target_engine = engine or analytics_engine
 
     try:
         with target_engine.connect() as conn:
+            # Enforce server-side execution timeout and read-only transaction on PostgreSQL
+            if conn.dialect.name == "postgresql":
+                conn.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)};"))
+                conn.execute(text("SET LOCAL default_transaction_read_only = on;"))
+
             result = conn.execute(text(sql))
             columns = list(result.keys())
             mappings = result.mappings()

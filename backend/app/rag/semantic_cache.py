@@ -54,7 +54,8 @@ def _hydrate_cache_if_needed(db: Session, embedding_provider: EmbeddingProvider)
             return
 
         try:
-            entries = db.query(QueryCache).all()
+            # Bound in-memory cache hydration to top 1,000 most recently used entries
+            entries = db.query(QueryCache).order_by(QueryCache.last_used_at.desc()).limit(1000).all()
             if entries:
                 questions = [e.question_normalized for e in entries]
                 vectors = embedding_provider.embed_batch(questions)

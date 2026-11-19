@@ -2,7 +2,6 @@
 Retrieval Agent: Scopes database schema and extracts golden few-shot queries using Hybrid RAG.
 """
 import time
-
 from typing import Any
 
 from app.agents.state import AgentState
@@ -23,9 +22,10 @@ class RetrievalAgent:
     def run(self, state: AgentState) -> AgentState:
         start = time.monotonic()
         snapshot = get_schema_snapshot(state.engine)
-        total_tables = len(snapshot)
+        actual_tables = [t for t in snapshot.keys() if not t.startswith("__")]
+        total_tables = len(actual_tables)
 
-        # For very small schemas (<= 12 tables like default Chinook), full schema is cheap,
+        # For very small schemas (<= 15 tables like default Chinook), full schema is cheap,
         # but few-shot golden examples are still valuable for complex queries.
         if self.settings.enable_schema_rag:
             try:
@@ -35,14 +35,14 @@ class RetrievalAgent:
                 top_k = self.settings.rag_top_k_tables if total_tables > 15 else total_tables
                 res = retriever.retrieve(state.question, top_k_tables=top_k)
 
-                state.retrieved_tables = res.table_names if total_tables > 15 else list(snapshot.keys())
+                state.retrieved_tables = res.table_names if total_tables > 15 else actual_tables
                 state.golden_queries = res.golden_queries
                 state.retrieval_ms = res.retrieval_ms
             except Exception as e:
                 logger.warning("RetrievalAgent error, falling back to full schema: %s", e)
-                state.retrieved_tables = list(snapshot.keys())
+                state.retrieved_tables = actual_tables
         else:
-            state.retrieved_tables = list(snapshot.keys())
+            state.retrieved_tables = actual_tables
 
         elapsed = (time.monotonic() - start) * 1000
         state.step_latencies["retrieval_ms"] = elapsed
